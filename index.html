@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <title>Memoriale Gaza – Vanilla + Vite</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+    #instructions {
+      position: absolute;
+      top: 50%; width: 100%; text-align: center;
+      color: #fff; font-family: Arial; font-size: 24px;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+  <audio src="./public/graveyard-whispers-305210.mp3" autoplay loop></audio>
+  <div id="instructions">Click to enter<br>↑↓←→ to move
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
