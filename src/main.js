@@ -66,16 +66,18 @@ function setupScene() {
   labelRenderer.domElement.style.top = '0';
   document.body.appendChild(labelRenderer.domElement);
 
-  const info = document.createElement('div');
-  info.id = 'instructions';
-  Object.assign(info.style, {
-    position: 'absolute', top: '20px', left: '20px',
-    color: '#ccc', // testo più tenue
-    background: 'rgba(30,30,30,0.8)', // sfondo scuro
-    padding: '10px', zIndex: '100', fontFamily: 'sans-serif'
-  });
-  info.innerHTML = `Number of Palestinians killed: ${TOTAL_COUNT}`;
-  document.body.appendChild(info);
+  let count = document.getElementById("sad-count");
+  count.innerHTML = TOTAL_COUNT;
+  // const info = document.createElement('div');
+  // info.id = 'instructions';
+  // Object.assign(info.style, {
+  //   position: 'absolute', top: '20px', left: '20px',
+  //   color: '#ccc', // testo più tenue
+  //   background: 'rgba(30,30,30,0.8)', // sfondo scuro
+  //   padding: '10px', zIndex: '100', fontFamily: 'sans-serif'
+  // });
+  // info.innerHTML = `Number of Palestinians killed: ${TOTAL_COUNT}`;
+  // document.body.appendChild(info);
 
   // Luci cupe
   scene.add(new THREE.HemisphereLight(0x444444, 0x222222, 0.5));
@@ -157,7 +159,9 @@ function setupControls() {
   scene.add(controls.getObject());
 
   const instructions = document.getElementById('instructions');
+  const title = document.getElementById('title');
   controls.addEventListener('lock', () => instructions && (instructions.style.display = 'none'));
+  controls.addEventListener('lock', () => title && (title.style.display = 'none'));
 
   document.body.addEventListener('click', () => {
     if (!dropping) {

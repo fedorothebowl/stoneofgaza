@@ -2,32 +2,39 @@
 <html lang="it">
 <head>
   <meta charset="UTF-8" />
-  <title>Memoriale Gaza – Vanilla + Vite</title>
+  <title>StoneOfGaza - Memorial for the palestinian people</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   <style>
     body { margin: 0; overflow: hidden; }
-    canvas { display: block; }
-    #instructions {
-      position: absolute;
-      top: 50%; width: 100%; text-align: center;
-      color: #fff; font-family: Arial; font-size: 24px;
-      user-select: none;
-    }
   </style>
 </head>
-<body>
-<audio loop autoplay muted playsinline id="bg-audio">
-  <source src="/graveyard-whispers-305210.mp3" type="audio/mpeg">
-</audio>
-<script>
-  document.body.addEventListener('click', () => {
-    const a = document.getElementById('bg-audio');
-    a.muted = false;
-    a.play();
-  }, { once: true });
-</script>
+  <body>
+  <audio loop autoplay muted playsinline id="bg-audio">
+    <source src="/graveyard-whispers-305210.mp3" type="audio/mpeg">
+  </audio>
+  <script>
+    document.body.addEventListener('click', () => {
+      const a = document.getElementById('bg-audio');
+      a.muted = false;
+      a.play();
+    }, { once: true });
+  </script>
 
-  <div id="instructions">Click to enter<br>↑↓←→ to move
-  </div>
-  <script type="module" src="/src/main.js"></script>
-</body>
+    <main class="text-stone-300">
+
+      <div id="instructions" class="absolute inset-0 grid place-items-center text-lg">Click to enter</div>
+      
+      <div id="title" class="absolute top-0 left-0 right-0 mx-auto grid place-items-center text-center z-10">
+        <div class="mt-4 mx-4 bg-black/50 rounded-xl px-5 py-2.5 w-max">
+          <h1 class="block text-md">A memorial for the palestinian people</h1>
+          <h2 class="text-xs"><a targte="_blank" href="https://data.techforpalestine.org/docs/killed-in-gaza/#source" id="sad-count" class="underline"></a> is not just numbers</h2>
+        </div>
+      </div>
+
+      <div class="absolute text-xs bottom-4 right-0 left-0 mx-auto text-center">↑↓←→ to move</div>
+    </main>
+    
+    <script type="module" src="/src/main.js"></script>
+    
+  </body>
 </html>
