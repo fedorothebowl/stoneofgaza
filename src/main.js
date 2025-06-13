@@ -48,16 +48,73 @@ async function init() {
   }
 }
 
+function createDarkSky() {
+  // Sfera grande per lo skybox chiarito
+  const skyGeometry = new THREE.SphereGeometry(500, 32, 32);
+  
+  const skyMaterial = new THREE.ShaderMaterial({
+    vertexShader: `
+      varying vec3 vWorldPosition;
+      void main() {
+        vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+        vWorldPosition = worldPosition.xyz;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 topColor;
+      uniform vec3 bottomColor;
+      uniform vec3 midColor;
+      uniform float offset;
+      uniform float exponent;
+      varying vec3 vWorldPosition;
+      
+      void main() {
+        float h = normalize(vWorldPosition + offset).y;
+        
+        vec3 color;
+        if (h > 0.2) {
+          color = mix(midColor, topColor, (h - 0.2) / 0.8);
+        } else if (h > -0.3) {
+          color = mix(bottomColor, midColor, (h + 0.3) / 0.5);
+        } else {
+          color = bottomColor;
+        }
+        
+        gl_FragColor = vec4(color, 1.0);
+      }
+    `,
+    uniforms: {
+      topColor:    { value: new THREE.Color(0x909090) }, // Grigio chiaro in alto
+      midColor:    { value: new THREE.Color(0xa0a0a0) }, // Grigio medio chiaro
+      bottomColor: { value: new THREE.Color(0x707070) }, // Grigio non troppo scuro in basso
+      offset:      { value: 33 },
+      exponent:    { value: 0.4 }                         // Gradiente più dolce
+    },
+    side: THREE.BackSide
+  });
+  
+  const sky = new THREE.Mesh(skyGeometry, skyMaterial);
+  return sky;
+}
+
+
 function setupScene() {
   scene = new THREE.Scene();
-  // Sfondo cupo per senso di tristezza
-  scene.background = new THREE.Color(0x1e1e1e);
+  
+  // Aggiungo il cielo cupo
+  const darkSky = createDarkSky();
+  scene.add(darkSky);
+
+  // Nebbia per aumentare l'atmosfera angosciante ma mantenere visibilità
+  scene.fog = new THREE.Fog(0x404040, 40, 200);
 
   camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
   camera.position.set(0, START_HEIGHT, 0);
 
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setClearColor(0x303030); // Colore di sfondo grigio scuro
   document.body.appendChild(renderer.domElement);
 
   labelRenderer = new CSS2DRenderer();
@@ -68,31 +125,34 @@ function setupScene() {
 
   let count = document.getElementById("sad-count");
   count.innerHTML = TOTAL_COUNT;
-  // const info = document.createElement('div');
-  // info.id = 'instructions';
-  // Object.assign(info.style, {
-  //   position: 'absolute', top: '20px', left: '20px',
-  //   color: '#ccc', // testo più tenue
-  //   background: 'rgba(30,30,30,0.8)', // sfondo scuro
-  //   padding: '10px', zIndex: '100', fontFamily: 'sans-serif'
-  // });
-  // info.innerHTML = `Number of Palestinians killed: ${TOTAL_COUNT}`;
-  // document.body.appendChild(info);
 
-  // Luci cupe
-  scene.add(new THREE.HemisphereLight(0x444444, 0x222222, 0.5));
-  const dirLight = new THREE.DirectionalLight(0x333333, 0.4);
-  dirLight.position.set(-100, 100, -100);
+  // Illuminazione con più contrasto
+  // Luce emisferica per illuminazione di base
+  scene.add(new THREE.HemisphereLight(0x606060, 0x303030, 0.5));
+  
+  // Luce direzionale più forte per creare contrasto
+  const dirLight = new THREE.DirectionalLight(0x808080, 0.7);
+  dirLight.position.set(-50, 80, -50);
+  dirLight.castShadow = true;
   scene.add(dirLight);
 
-  // Terreno con colore distinto dai pilastri
+  // Luce ambientale per evitare zone completamente buie
+  const ambientLight = new THREE.AmbientLight(0x404040, 0.3);
+  scene.add(ambientLight);
+
+  // Terreno grigio scuro
   const gridSize = Math.ceil(Math.sqrt(TOTAL_COUNT));
-  const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x777777 });
+  const groundMaterial = new THREE.MeshStandardMaterial({ 
+    color: 0x3a3a3a, 
+    roughness: 0.8,
+    metalness: 0.1 
+  });
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(gridSize * SPACING, gridSize * SPACING),
     groundMaterial
   );
   ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
   scene.add(ground);
 }
 
@@ -115,9 +175,14 @@ async function fetchChunks() {
 function addInstancedBlocks(data) {
   if (!instancedMesh) {
     const geometry = new THREE.BoxGeometry(2, 4, 2);
-    // Materiale scuro e opaco per i pilastri
-    const material = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 1, metalness: 0 });
+    // Materiale dei pilastri nero per forte contrasto
+    const material = new THREE.MeshStandardMaterial({ 
+      color: 0x000000, 
+      roughness: 0.7, 
+      metalness: 0.0
+    });
     instancedMesh = new THREE.InstancedMesh(geometry, material, TOTAL_COUNT);
+    instancedMesh.castShadow = true;
     scene.add(instancedMesh);
   }
 
@@ -189,7 +254,6 @@ function setupControls() {
   });
 }
 
-
 function onWindowResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
@@ -230,21 +294,39 @@ function animate() {
     }
     if (!blocked) controls.getObject().position.copy(newPos);
 
-    // Gestione etichette
+    // Gestione etichette con opacità graduale e colori più leggibili nel buio
     items.forEach(item => {
       const dist = camera.position.distanceTo(item.basePos);
-      if (dist < LABEL_DISTANCE) {
+      
+      if (dist < 30) {
+        let opacity;
+
+        if (dist < 10) {
+          opacity = 1.0;  // Opacità completa fino a 10 unità
+        } else if (dist < 15) {
+          opacity = 0.3;  // Opacità ridotta tra 10 e 15 unità
+        } else {
+          opacity = 0.1;  // Opacità minima tra 15 e 30 unità
+        }
+        
         if (!item.label) {
+          // Crea nuova etichetta con colori più chiari per la leggibilità
           const div = document.createElement('div');
           div.className = 'label';
-          div.style.color = '#ddd';
+          div.style.color = '#cccccc'; // Grigio chiaro per leggibilità
+          div.style.textShadow = '1px 1px 2px rgba(0,0,0,0.8)'; // Ombra per contrasto
+          div.style.opacity = opacity;
           div.innerHTML = `<strong>${item.en_name}</strong><br>${item.name}<br>Age: ${item.age}`;
           const label = new CSS2DObject(div);
           label.position.copy(item.basePos);
           scene.add(label);
           item.label = label;
+        } else {
+          // Aggiorna opacità dell'etichetta esistente
+          item.label.element.style.opacity = opacity;
         }
       } else if (item.label) {
+        // Rimuovi etichetta se troppo lontana
         scene.remove(item.label);
         item.label.element.remove();
         item.label = null;
