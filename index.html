@@ -1,17 +1,20 @@
 <!DOCTYPE html>
-<html lang="it">
+<html lang="en">
+
 <head>
   <meta charset="UTF-8" />
-  <title>StoneOfGaza - Memorial for the palestinian people</title>
+  <title>Stones of Gaza - Interactive Memorial Installation | Digital Art for Palestine</title>
+  <meta name="description" content="Experience 'Stones of Gaza,' a powerful digital memorial installation where each pillar represents a life lost. This interactive artwork transforms Gaza Ministry of Health data into a living monument of collective memory and testimony.">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
-  <style>
-    body { margin: 0; overflow: hidden; }
-  </style>
 </head>
+
   <body>
+    
   <audio loop autoplay muted playsinline id="bg-audio">
-    <source src="/graveyard-whispers-305210.mp3" type="audio/mpeg">
+    <source src="/88888.mp3" type="audio/mpeg">
   </audio>
+
   <script>
     document.body.addEventListener('click', () => {
       const a = document.getElementById('bg-audio');
@@ -21,17 +24,23 @@
   </script>
 
     <main class="text-stone-300">
+    
+      <div class="w-screen h-screen fixed inset-0 z-[1] grid place-items-center"  id="instructions">
+        <div class="bg-black/50 w-[90%] md:max-w-md max-w-max m-auto h-max text-xs p-4 rounded-md space-y-2.5">
+            <p>This project is only accessible on <span class="underline">desktop devices</span>.</p>
 
-      <div id="instructions" class="absolute inset-0 grid place-items-center text-lg">Click to enter</div>
-      
-      <div id="title" class="absolute top-0 left-0 right-0 mx-auto grid place-items-center text-center z-10">
-        <div class="mt-4 mx-4 bg-black/50 rounded-xl px-5 py-2.5 w-max">
-          <h1 class="block text-md">A memorial for the palestinian people</h1>
-          <h2 class="text-xs"><a targte="_blank" href="https://data.techforpalestine.org/docs/killed-in-gaza/#source" id="sad-count" class="underline"></a> is not just numbers</h2>
+          <div>
+            <p><strong>"Stones of Gaza"</strong> is an artistic installation that transforms pain into collective memory. Each vertical pillar embodies an interrupted life, creating a landscape of testimony where data from Gaza's Ministry of Health becomes digital sculptural matter. The work generates a silent dialogue between statistics and humanity, where the serial accumulation of volumes builds a living memorial that updates over time, making the invisible tangible and transforming numbers into physical presence in space.</p>
+          </div>
+
+          <p>As of today, <span id="sad-count"></span> pillars have been registered.</p>
+
+          <div class="flex justify-between">
+            <span>↑↓←→ to move <br> ESC to exit </span>
+            <button id="start" class="bg-white rounded-md px-2 py-1 text-black font-bold cursor-pointer hover:bg-transparent hover:text-white border border-white">Enter</button>
+          </div>
         </div>
       </div>
-
-      <div class="absolute text-xs bottom-4 right-0 left-0 mx-auto text-center">↑↓←→ to move</div>
     </main>
     
     <script type="module" src="/src/main.js"></script>
