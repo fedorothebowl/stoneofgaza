@@ -114,13 +114,13 @@
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x303030); // Colore di sfondo grigio scuro
-    document.body.appendChild(renderer.domElement);
+    document.querySelector("main").appendChild(renderer.domElement);
 
     labelRenderer = new CSS2DRenderer();
     labelRenderer.setSize(window.innerWidth, window.innerHeight);
     labelRenderer.domElement.style.position = 'absolute';
     labelRenderer.domElement.style.top = '0';
-    document.body.appendChild(labelRenderer.domElement);
+    document.querySelector("main").appendChild(labelRenderer.domElement);
 
     let count = document.getElementById("sad-count");
     count.innerHTML = TOTAL_COUNT;
