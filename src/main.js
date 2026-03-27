@@ -68,22 +68,51 @@ const TARGET_FOG_DENSITY  = 0.1;
 // ─────────────────────────────────────────────────────────────
 // AUTOPLAY
 // ─────────────────────────────────────────────────────────────
-const AUTOPLAY_IDLE_DELAY   = 5;    // secondi prima di partire (desktop)
+const AUTOPLAY_IDLE_DELAY   = 5;
 const AUTOPLAY_WALK_SPEED   = 1.44;
 const AUTOPLAY_TURN_SECONDS = 1.8;
+
+// ── Reading (lettura del nome sul pilastro) ───────────────────────────────────
+const READING_TURN_SECS  = 0.6;   // durata svolta verso il pilastro
+const READING_PITCH      = 0.28; // angolo verso l'alto (rad, positivo = su in YXZ)
+const READING_PITCH_LERP = 1.8;   // velocità lerp pitch
+const READING_PAUSE_SECS = 1.5;   // pausa a leggere
 
 let lastUserInputTime = null;
 let autoplayActive    = false;
 
-let apSub          = 'walking';
-let apTimer        = 0;
-let apWalkDist     = 0;
-let apWalkedDist   = 0;
-let apPauseDur     = 0;
-let apDirIdx       = 0;
-let apIntersCount  = 0;
-let apIntersTarget = 1;
-let apSnapTarget   = 0;
+let apSub            = 'walking';
+let apTimer          = 0;
+let apWalkDist       = 0;
+let apWalkedDist     = 0;
+let apReadWalkDist   = 0; // distanza percorsa dall'ultima lettura
+let apReadWalkTarget = 0; // distanza al prossimo stop di lettura
+let apPauseDur       = 0;
+let apDirIdx         = 0;
+let apIntersCount    = 0;
+let apIntersTarget   = 1;
+let apSnapTarget     = 0;
+
+// Stato reading
+let apReadPhase   = ''; // 'turn_to'|'tilt_up'|'pause'|'tilt_down'|'turn_back'
+let apReadYawBack = 0;  // yaw a cui tornare dopo la lettura
+
+// ── Pitch quaternion-safe ─────────────────────────────────────────────────────
+// Settare camera.rotation.x direttamente con Euler XYZ default può produrre roll.
+// Usiamo sempre Euler YXZ (come PointerLockControls internamente) tramite quaternione.
+const _pitchEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+
+function getCameraPitch() {
+  _pitchEuler.setFromQuaternion(camera.quaternion, 'YXZ');
+  return _pitchEuler.x;
+}
+
+function setCameraPitch(value) {
+  _pitchEuler.setFromQuaternion(camera.quaternion, 'YXZ');
+  _pitchEuler.x = value;
+  _pitchEuler.z = 0; // garantisce roll sempre zero
+  camera.quaternion.setFromEuler(_pitchEuler);
+}
 
 function nearestCorridorCenter(pos, dirIdx) {
   const dir = AP_DIRS[dirIdx];
@@ -160,6 +189,25 @@ function distToNextIntersection(pos, dirIdx) {
   return dist;
 }
 
+// Come distToNextIntersection ma per la posizione dei pilastri (fase 0 invece di 0.5).
+// I pilastri laterali sono allineati a n*SPACING nella direzione di marcia.
+function distToNextPillar(pos, dirIdx) {
+  const dir   = AP_DIRS[dirIdx];
+  const S     = SPACING;
+  const dSign = dir.x !== 0 ? dir.x : dir.z;
+  const v     = (dir.x !== 0 ? pos.x : pos.z) + apGridHalfSize;
+  const phase = ((v / S) % 1 + 1) % 1; // [0, 1)
+
+  let dist;
+  if (dSign > 0) {
+    dist = (1.0 - phase) * S; // prossimo phase=0
+  } else {
+    dist = phase * S;          // phase=0 nella direzione negativa
+  }
+  if (dist < CAMERA_RADIUS) dist += S;
+  return dist;
+}
+
 function startAutoplay() {
   autoplayActive = true;
   apTimer = 0;
@@ -181,12 +229,14 @@ function startAutoplay() {
   apYawStart  = curYaw;
   apYawTarget = dirToYaw(AP_DIRS[apDirIdx]);
 
-  apSub          = 'snapping';
-  apSnapTarget   = nearestCorridorCenter(controls.getObject().position, apDirIdx);
-  apWalkDist     = distToNextIntersection(controls.getObject().position, apDirIdx);
-  apWalkedDist   = 0;
-  apIntersCount  = 0;
-  apIntersTarget = Math.ceil(Math.random() * 5);
+  apSub            = 'snapping';
+  apSnapTarget     = nearestCorridorCenter(controls.getObject().position, apDirIdx);
+  apWalkDist       = distToNextIntersection(controls.getObject().position, apDirIdx);
+  apWalkedDist     = 0;
+  apReadWalkDist   = 0;
+  apReadWalkTarget = distToNextPillar(controls.getObject().position, apDirIdx); // primo pilastro
+  apIntersCount    = 0;
+  apIntersTarget   = Math.ceil(Math.random() * 5);
 }
 
 function stopAutoplay() {
@@ -203,42 +253,40 @@ function updateAutoplay(delta) {
 
   const camObj = controls.getObject();
 
-  // Reset pitch morbido
-  if (Math.abs(camera.rotation.x) > 0.001) {
-    camera.rotation.x += (0 - camera.rotation.x) * Math.min(1, 0.4 * delta);
-  } else {
-    camera.rotation.x = 0;
+  // ── Reset pitch morbido — solo fuori da reading ────────────────────────────
+  if (apSub !== 'reading') {
+    const px = getCameraPitch();
+    if (Math.abs(px) > 0.001) {
+      setCameraPitch(px + (0 - px) * Math.min(1, 0.4 * delta));
+    } else {
+      setCameraPitch(0);
+    }
   }
 
   apTimer += delta;
 
-  // ── Snapping ──────────────────────────────────────────────────────────────
+  // ── Snapping — quasi istantaneo ───────────────────────────────────────────
   if (apSub === 'snapping') {
     const dir        = AP_DIRS[apDirIdx];
-    const SNAP_SPEED = 4.0;
+    const SNAP_SPEED = 18.0;
 
     if (dir.z !== 0) {
       const diff = apSnapTarget - camObj.position.x;
-      if (Math.abs(diff) < 0.02) {
-        camObj.position.x = apSnapTarget;
-        apSub = 'walking';
-      } else {
-        camObj.position.x += Math.sign(diff) * Math.min(Math.abs(diff), SNAP_SPEED * delta);
-      }
+      if (Math.abs(diff) < 0.02) { camObj.position.x = apSnapTarget; apSub = 'walking'; }
+      else camObj.position.x += Math.sign(diff) * Math.min(Math.abs(diff), SNAP_SPEED * delta);
     } else {
       const diff = apSnapTarget - camObj.position.z;
-      if (Math.abs(diff) < 0.02) {
-        camObj.position.z = apSnapTarget;
-        apSub = 'walking';
-      } else {
-        camObj.position.z += Math.sign(diff) * Math.min(Math.abs(diff), SNAP_SPEED * delta);
-      }
+      if (Math.abs(diff) < 0.02) { camObj.position.z = apSnapTarget; apSub = 'walking'; }
+      else camObj.position.z += Math.sign(diff) * Math.min(Math.abs(diff), SNAP_SPEED * delta);
     }
 
     let yawDiff = apYawTarget - camObj.rotation.y;
     yawDiff = ((yawDiff + Math.PI) % (Math.PI * 2)) - Math.PI;
-    camObj.rotation.y += yawDiff * Math.min(1, 8 * delta);
-
+    if (Math.abs(yawDiff) < 0.001) {
+      camObj.rotation.y = apYawTarget;
+    } else {
+      camObj.rotation.y += yawDiff * Math.min(1, 8 * delta);
+    }
     return;
   }
 
@@ -260,8 +308,7 @@ function updateAutoplay(delta) {
       apTimer      = 0;
       apWalkedDist = 0;
       if (footstepAudio && !footstepAudio.paused) {
-        footstepAudio.pause();
-        footstepAudio.currentTime = 0;
+        footstepAudio.pause(); footstepAudio.currentTime = 0;
       }
     } else {
       camObj.position.copy(newPos);
@@ -271,12 +318,46 @@ function updateAutoplay(delta) {
 
       let yawDiff = apYawTarget - camObj.rotation.y;
       yawDiff = ((yawDiff + Math.PI) % (Math.PI * 2)) - Math.PI;
-      camObj.rotation.y += yawDiff * Math.min(1, 8 * delta);
+      if (Math.abs(yawDiff) < 0.001) {
+        camObj.rotation.y = apYawTarget;
+      } else {
+        camObj.rotation.y += yawDiff * Math.min(1, 8 * delta);
+      }
 
-      apWalkedDist += step;
+      apWalkedDist   += step;
+      apReadWalkDist += step;
 
       if (footstepAudio && footstepAudio.paused) footstepAudio.play();
 
+      // ── Stop lettura (ogni 2 pilastri, allineato alla griglia) ────────────
+      if (apReadWalkDist >= apReadWalkTarget) {
+        apReadWalkDist = 0;
+        // Prossimo stop: 2 pilastri avanti (dopo la ripresa del cammino)
+        apReadWalkTarget = 2 * SPACING;
+
+        // Scelgo lato casuale (sinistra o destra)
+        const sideOffset = Math.random() < 0.5 ? 1 : 3;
+        const sideDirIdx = (apDirIdx + sideOffset) % 4;
+
+        apReadYawBack = dirToYaw(AP_DIRS[apDirIdx]);
+        apYawStart    = camObj.rotation.y;
+        apYawTarget   = dirToYaw(AP_DIRS[sideDirIdx]);
+
+        let diff = apYawTarget - apYawStart;
+        diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
+        apYawTarget = apYawStart + diff;
+
+        apSub       = 'reading';
+        apReadPhase = 'turn_to';
+        apTimer     = 0;
+
+        if (footstepAudio && !footstepAudio.paused) {
+          footstepAudio.pause(); footstepAudio.currentTime = 0;
+        }
+        return;
+      }
+
+      // ── Stop svolta all'incrocio ───────────────────────────────────────────
       if (apWalkedDist >= apWalkDist) {
         apIntersCount++;
         apWalkedDist = 0;
@@ -291,9 +372,77 @@ function updateAutoplay(delta) {
           apWalkDist = distToNextIntersection(camObj.position, apDirIdx);
         }
         if (footstepAudio && !footstepAudio.paused) {
-          footstepAudio.pause();
-          footstepAudio.currentTime = 0;
+          footstepAudio.pause(); footstepAudio.currentTime = 0;
         }
+      }
+    }
+
+  // ── Reading ───────────────────────────────────────────────────────────────
+  } else if (apSub === 'reading') {
+
+    if (apReadPhase === 'turn_to') {
+      // Svolta verso il pilastro laterale
+      const t    = Math.min(1, apTimer / READING_TURN_SECS);
+      const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+      let diff   = apYawTarget - apYawStart;
+      diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
+      camObj.rotation.y = apYawStart + diff * ease;
+
+      if (t >= 1) {
+        camObj.rotation.y = apYawStart + diff;
+        apReadPhase = 'tilt_up';
+        apTimer     = 0;
+      }
+
+    } else if (apReadPhase === 'tilt_up') {
+      // Alza lo sguardo (pitch negativo = su) — quaternion-safe
+      const cur  = getCameraPitch();
+      const diff = READING_PITCH - cur;
+      setCameraPitch(cur + diff * Math.min(1, READING_PITCH_LERP * delta));
+      if (Math.abs(diff) < 0.005) {
+        setCameraPitch(READING_PITCH);
+        apReadPhase = 'pause';
+        apTimer     = 0;
+      }
+
+    } else if (apReadPhase === 'pause') {
+      // Fermo a leggere
+      if (apTimer >= READING_PAUSE_SECS) {
+        apReadPhase = 'tilt_down';
+        apTimer     = 0;
+      }
+
+    } else if (apReadPhase === 'tilt_down') {
+      // Abbassa lo sguardo — quaternion-safe
+      const cur = getCameraPitch();
+      setCameraPitch(cur + (0 - cur) * Math.min(1, READING_PITCH_LERP * delta));
+      if (Math.abs(cur) < 0.005) {
+        setCameraPitch(0);
+        // Prepara svolta di ritorno
+        apYawStart  = camObj.rotation.y;
+        apYawTarget = apReadYawBack;
+        let diff    = apYawTarget - apYawStart;
+        diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
+        apYawTarget = apYawStart + diff;
+        apReadPhase = 'turn_back';
+        apTimer     = 0;
+      }
+
+    } else if (apReadPhase === 'turn_back') {
+      // Svolta di ritorno
+      const t    = Math.min(1, apTimer / READING_TURN_SECS);
+      const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+      let diff   = apYawTarget - apYawStart;
+      diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
+      camObj.rotation.y = apYawStart + diff * ease;
+
+      if (t >= 1) {
+        camObj.rotation.y = apYawStart + diff;
+        apYawStart  = camObj.rotation.y;
+        apYawTarget = apReadYawBack;
+        apWalkDist  = distToNextIntersection(camObj.position, apDirIdx);
+        apSub       = 'walking';
+        apTimer     = 0;
       }
     }
 
@@ -711,7 +860,7 @@ function setupControls() {
     document.addEventListener('mousemove', (e) => {
       if (!controls.isLocked || gameState !== 'playing') return;
       const moved = Math.abs(e.movementX) + Math.abs(e.movementY);
-      if (moved < 3) return;
+      if (moved < 6) return; // ignora jitter del sistema
       lastUserInputTime = performance.now() / 1000;
       if (autoplayActive) stopAutoplay();
     });
