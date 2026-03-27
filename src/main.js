@@ -245,7 +245,17 @@ function updateAutoplay(delta) {
 
   const camObj = controls.getObject();
 
-  // ── Reset pitch con decadimento esponenziale — smooth a qualsiasi framerate
+  // ── Azzera il roll (z) via quaternione — preserva yaw (y) e pitch (x) intatti.
+  // camObj === camera in PointerLockControls moderno: scrivere rotation.z direttamente
+  // o usare rotation.set() tocca anche gli altri assi per effetto gimbal.
+  // La via sicura è la stessa usata da setCameraPitch: Euler YXZ → zero z → quaternione.
+  _pitchEuler.setFromQuaternion(camObj.quaternion, 'YXZ');
+  if (Math.abs(_pitchEuler.z) > 0.0001) {
+    _pitchEuler.z = 0;
+    camObj.quaternion.setFromEuler(_pitchEuler);
+  }
+
+  // ── Reset pitch camera con decadimento esponenziale — smooth a qualsiasi framerate
   if (apSub !== 'reading') {
     const px = getCameraPitch();
     if (Math.abs(px) > 0.001) {
@@ -404,6 +414,7 @@ function updateAutoplay(delta) {
       if (t >= 1) {
         camObj.rotation.y = apYawStart + diff;
         apYawStart  = camObj.rotation.y;
+        normalizeYaw(camObj);
         apYawTarget = apReadYawBack;
         apWalkDist  = distToNextIntersection(camObj.position, apDirIdx);
         apSub       = 'walking';
@@ -428,6 +439,7 @@ function updateAutoplay(delta) {
 
     if (t >= 1) {
       camObj.rotation.y = apYawStart + diff;
+      normalizeYaw(camObj);
       apYawStart      = camObj.rotation.y;
       apSnapTarget    = nearestCorridorCenter(camObj.position, apDirIdx);
       apSub           = 'snapping';
@@ -731,7 +743,7 @@ function addInstancedBlocks(data) {
     const x   = col * SPACING - halfGrid;
     const z   = row * SPACING - halfGrid;
     const terrainY = getTerrainHeight(x, z);
-    const y        = (pilastroHeight / 2) + terrainY;
+    const y        = (pilastroHeight / 2) + terrainY - 0.15;
 
     instancedMesh.setMatrixAt(index, new THREE.Matrix4().makeTranslation(x, y, z));
 
@@ -788,7 +800,7 @@ function createBorderPillars() {
 
   borderPos.forEach(({ x, z }, i) => {
     const terrainY = getTerrainHeight(x, z);
-    const y = (pilastroHeight / 2) + terrainY;
+    const y = (pilastroHeight / 2) + terrainY - 0.15;
     borderMesh.setMatrixAt(i, new THREE.Matrix4().makeTranslation(x, y, z));
 
     colliderBoxes.push(new THREE.Box3(
@@ -838,6 +850,21 @@ function shortestYaw(from, to) {
   if (d >  Math.PI) d -= Math.PI * 2;
   if (d < -Math.PI) d += Math.PI * 2;
   return d;
+}
+
+// Riporta camObj.rotation.y in [-π, π] e aggiusta i target di animazione
+// di conseguenza, così le animazioni in corso non saltano.
+// Va chiamato quando una svolta è completata (rotation.y è fermo sul target).
+function normalizeYaw(camObj) {
+  const PI2 = Math.PI * 2;
+  let y = camObj.rotation.y;
+  if (y > Math.PI || y < -Math.PI) {
+    const shift = Math.round(y / PI2) * PI2;
+    y -= shift;
+    camObj.rotation.y = y;
+    apYawStart  -= shift;
+    apYawTarget -= shift;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
