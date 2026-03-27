@@ -45,28 +45,28 @@ let skyMesh;
 // VALORI INIZIALI — devono coincidere con quelli in updateEyeAdaptation
 // così non c'è salto visibile al frame 0 dell'adattamento
 // ─────────────────────────────────────────────────────────────
-const INITIAL_HEMISPHERE  = 0.45;
-const INITIAL_DIRECTIONAL = 1.2;
-const INITIAL_AMBIENT     = 0.45;
-const INITIAL_FILL        = 0.35;
-const INITIAL_BACK        = 0.25;
-const INITIAL_SKY         = 0.65;
-const INITIAL_FOG_DENSITY = 0.007;
+const INITIAL_HEMISPHERE  = 0.90 * 0.5;
+const INITIAL_DIRECTIONAL = 2.4  * 0.5;
+const INITIAL_AMBIENT     = 0.90 * 0.5;
+const INITIAL_FILL        = 0.70 * 0.5;
+const INITIAL_BACK        = 0.50 * 0.5;
+const INITIAL_SKY         = 1.30 * 0.5;
+const INITIAL_FOG_DENSITY = 0;
 
-const TARGET_HEMISPHERE   = 0.90;
-const TARGET_DIRECTIONAL  = 2.4;
-const TARGET_AMBIENT      = 0.90;
-const TARGET_FILL         = 0.70;
-const TARGET_BACK         = 0.50;
-const TARGET_SKY          = 1.30;
-const TARGET_FOG_DENSITY  = 0.01;
+const TARGET_HEMISPHERE   = 0.90 * 1.5;
+const TARGET_DIRECTIONAL  = 2.4  * 1.5;
+const TARGET_AMBIENT      = 0.90 * 1.5;
+const TARGET_FILL         = 0.70 * 1.5;
+const TARGET_BACK         = 0.50 * 1.5;
+const TARGET_SKY          = 1.30 * 1.5;
+const TARGET_FOG_DENSITY  = 0.1;
 
 // ─────────────────────────────────────────────────────────────
 // AUTOPLAY
 // ─────────────────────────────────────────────────────────────
-const AUTOPLAY_IDLE_DELAY   = 3;    // secondi di inattività prima di partire
+const AUTOPLAY_IDLE_DELAY   = 5;    // secondi di inattività prima di partire
 const AUTOPLAY_WALK_SPEED   = 1.44; // 20% più lento di prima (1.8 × 0.8)
-const AUTOPLAY_TURN_SECONDS = 0.85; // durata della rotazione fluida di 90°
+const AUTOPLAY_TURN_SECONDS = 1.8; // durata della rotazione fluida di 90°
 
 let lastUserInputTime = null; // null = intro/gioco non ancora iniziato
 let autoplayActive    = false;
@@ -185,9 +185,7 @@ function startAutoplay() {
   autoplayActive = true;
   apTimer = 0;
 
-  // FIX 2: snap immediato — azzera pitch (x) e roll (z) prima che parta qualsiasi lerp.
-  // Un frame di Euler YXZ con z != 0 basta a causare l'effetto "testa inclinata".
-  camera.rotation.x = 0;
+  // Azzera solo il roll (z) — il pitch (x) viene riportato a 0 con lerp morbida in updateAutoplay
   camera.rotation.z = 0;
 
   // Aggancia la direzione cardinale più vicina allo yaw attuale,
@@ -230,14 +228,12 @@ function updateAutoplay(delta) {
 
   const camObj = controls.getObject();
 
-  // ── Reset pitch → 0 (parallelo al pavimento) ─────────────────────────────
+  // ── Reset pitch → 0 con lerp morbida (circa 1.5s da posizione estrema) ────
   if (Math.abs(camera.rotation.x) > 0.001) {
-    camera.rotation.x += (0 - camera.rotation.x) * Math.min(1, 6 * delta);
+    camera.rotation.x += (0 - camera.rotation.x) * Math.min(1, 0.4 * delta);
   } else {
     camera.rotation.x = 0;
   }
-  // NB: camera.rotation.z non viene toccato qui — lo snap è solo in startAutoplay.
-  // Forzarlo ad ogni frame interferisce con PointerLockControls al momento del handoff.
 
   apTimer += delta;
 
