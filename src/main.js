@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
 
 // ── Rilevamento mobile ────────────────────────────────────────────────────────
-// Su mobile PointerLockControls non è supportato: usiamo autoplay immediato
 const isMobile = /Android|iPhone|iPad|iPod|Touch/i.test(navigator.userAgent)
   || ('ontouchstart' in window && navigator.maxTouchPoints > 1);
 
@@ -35,7 +34,7 @@ let gameState = 'intro';
 const bgAudio = document.getElementById('bg-audio');
 let footstepAudio;
 
-// Terreno collinoso
+// Terreno
 let terrainMesh;
 let terrainWidth  = 0;
 let terrainDepth  = 0;
@@ -45,6 +44,9 @@ let apGridHalfSize = 0;
 let gameStartTime = null;
 let hemisphereLight, dirLight, ambientLight, fillLight, backLight;
 let skyMesh;
+
+// Materiale condiviso per tutti i pilastri (principale + bordo)
+let sharedPillarMaterial = null;
 
 // ─────────────────────────────────────────────────────────────
 // VALORI LUCI
@@ -70,13 +72,13 @@ const TARGET_FOG_DENSITY  = 0.1;
 // ─────────────────────────────────────────────────────────────
 const AUTOPLAY_IDLE_DELAY   = 5;
 const AUTOPLAY_WALK_SPEED   = 1.44;
-const AUTOPLAY_TURN_SECONDS = 1.8;
+const AUTOPLAY_TURN_SECONDS = 2.6;
 
-// ── Reading (lettura del nome sul pilastro) ───────────────────────────────────
-const READING_TURN_SECS  = 0.6;   // durata svolta verso il pilastro
-const READING_PITCH      = 0.28; // angolo verso l'alto (rad, positivo = su in YXZ)
-const READING_PITCH_LERP = 1.8;   // velocità lerp pitch
-const READING_PAUSE_SECS = 1.5;   // pausa a leggere
+// ── Reading ───────────────────────────────────────────────────
+const READING_TURN_SECS  = 1.2;
+const READING_PITCH      = 0.28;
+const READING_PITCH_LERP = 0.9;
+const READING_PAUSE_SECS = 1.5;
 
 let lastUserInputTime = null;
 let autoplayActive    = false;
@@ -85,21 +87,18 @@ let apSub            = 'walking';
 let apTimer          = 0;
 let apWalkDist       = 0;
 let apWalkedDist     = 0;
-let apReadWalkDist   = 0; // distanza percorsa dall'ultima lettura
-let apReadWalkTarget = 0; // distanza al prossimo stop di lettura
+let apReadWalkDist   = 0;
+let apReadWalkTarget = 0;
 let apPauseDur       = 0;
 let apDirIdx         = 0;
 let apIntersCount    = 0;
 let apIntersTarget   = 1;
 let apSnapTarget     = 0;
 
-// Stato reading
-let apReadPhase   = ''; // 'turn_to'|'tilt_up'|'pause'|'tilt_down'|'turn_back'
-let apReadYawBack = 0;  // yaw a cui tornare dopo la lettura
+let apReadPhase   = '';
+let apReadYawBack = 0;
 
-// ── Pitch quaternion-safe ─────────────────────────────────────────────────────
-// Settare camera.rotation.x direttamente con Euler XYZ default può produrre roll.
-// Usiamo sempre Euler YXZ (come PointerLockControls internamente) tramite quaternione.
+// ── Pitch quaternion-safe ─────────────────────────────────────
 const _pitchEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 
 function getCameraPitch() {
@@ -110,7 +109,7 @@ function getCameraPitch() {
 function setCameraPitch(value) {
   _pitchEuler.setFromQuaternion(camera.quaternion, 'YXZ');
   _pitchEuler.x = value;
-  _pitchEuler.z = 0; // garantisce roll sempre zero
+  _pitchEuler.z = 0;
   camera.quaternion.setFromEuler(_pitchEuler);
 }
 
@@ -163,11 +162,7 @@ function apPickDir(emergencyCheckDist = SPACING * 0.8) {
 
   apDirIdx    = chosen;
   apYawStart  = controls.getObject().rotation.y;
-  apYawTarget = dirToYaw(AP_DIRS[apDirIdx]);
-
-  let diff = apYawTarget - apYawStart;
-  diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
-  apYawTarget = apYawStart + diff;
+  apYawTarget = apYawStart + shortestYaw(apYawStart, dirToYaw(AP_DIRS[apDirIdx]));
 }
 
 function distToNextIntersection(pos, dirIdx) {
@@ -175,7 +170,6 @@ function distToNextIntersection(pos, dirIdx) {
   const S     = SPACING;
   const dSign = dir.x !== 0 ? dir.x : dir.z;
   const v     = (dir.x !== 0 ? pos.x : pos.z) + apGridHalfSize;
-
   const phase = ((v / S) % 1 + 1) % 1;
 
   let dist;
@@ -189,20 +183,18 @@ function distToNextIntersection(pos, dirIdx) {
   return dist;
 }
 
-// Come distToNextIntersection ma per la posizione dei pilastri (fase 0 invece di 0.5).
-// I pilastri laterali sono allineati a n*SPACING nella direzione di marcia.
 function distToNextPillar(pos, dirIdx) {
   const dir   = AP_DIRS[dirIdx];
   const S     = SPACING;
   const dSign = dir.x !== 0 ? dir.x : dir.z;
   const v     = (dir.x !== 0 ? pos.x : pos.z) + apGridHalfSize;
-  const phase = ((v / S) % 1 + 1) % 1; // [0, 1)
+  const phase = ((v / S) % 1 + 1) % 1;
 
   let dist;
   if (dSign > 0) {
-    dist = (1.0 - phase) * S; // prossimo phase=0
+    dist = (1.0 - phase) * S;
   } else {
-    dist = phase * S;          // phase=0 nella direzione negativa
+    dist = phase * S;
   }
   if (dist < CAMERA_RADIUS) dist += S;
   return dist;
@@ -234,9 +226,9 @@ function startAutoplay() {
   apWalkDist       = distToNextIntersection(controls.getObject().position, apDirIdx);
   apWalkedDist     = 0;
   apReadWalkDist   = 0;
-  apReadWalkTarget = distToNextPillar(controls.getObject().position, apDirIdx); // primo pilastro
+  apReadWalkTarget = distToNextPillar(controls.getObject().position, apDirIdx);
   apIntersCount    = 0;
-  apIntersTarget   = Math.ceil(Math.random() * 5);
+  apIntersTarget   = 5 + Math.floor(Math.random() * 6); // 5–10 incroci
 }
 
 function stopAutoplay() {
@@ -253,11 +245,12 @@ function updateAutoplay(delta) {
 
   const camObj = controls.getObject();
 
-  // ── Reset pitch morbido — solo fuori da reading ────────────────────────────
+  // ── Reset pitch con decadimento esponenziale — smooth a qualsiasi framerate
   if (apSub !== 'reading') {
     const px = getCameraPitch();
     if (Math.abs(px) > 0.001) {
-      setCameraPitch(px + (0 - px) * Math.min(1, 0.4 * delta));
+      const t = 1.0 - Math.exp(-3.5 * delta);
+      setCameraPitch(THREE.MathUtils.lerp(px, 0, t));
     } else {
       setCameraPitch(0);
     }
@@ -265,7 +258,7 @@ function updateAutoplay(delta) {
 
   apTimer += delta;
 
-  // ── Snapping — quasi istantaneo ───────────────────────────────────────────
+  // ── Snapping ──────────────────────────────────────────────────────────────
   if (apSub === 'snapping') {
     const dir        = AP_DIRS[apDirIdx];
     const SNAP_SPEED = 18.0;
@@ -329,23 +322,17 @@ function updateAutoplay(delta) {
 
       if (footstepAudio && footstepAudio.paused) footstepAudio.play();
 
-      // ── Stop lettura (ogni 2 pilastri, allineato alla griglia) ────────────
+      // ── Stop lettura: ogni 3–5 pilastri ───────────────────────────────────
       if (apReadWalkDist >= apReadWalkTarget) {
-        apReadWalkDist = 0;
-        // Prossimo stop: 2 pilastri avanti (dopo la ripresa del cammino)
-        apReadWalkTarget = 2 * SPACING;
+        apReadWalkDist   = 0;
+        apReadWalkTarget = (3 + Math.floor(Math.random() * 3)) * SPACING; // 3–5
 
-        // Scelgo lato casuale (sinistra o destra)
         const sideOffset = Math.random() < 0.5 ? 1 : 3;
         const sideDirIdx = (apDirIdx + sideOffset) % 4;
 
         apReadYawBack = dirToYaw(AP_DIRS[apDirIdx]);
         apYawStart    = camObj.rotation.y;
-        apYawTarget   = dirToYaw(AP_DIRS[sideDirIdx]);
-
-        let diff = apYawTarget - apYawStart;
-        diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
-        apYawTarget = apYawStart + diff;
+        apYawTarget   = apYawStart + shortestYaw(apYawStart, dirToYaw(AP_DIRS[sideDirIdx]));
 
         apSub       = 'reading';
         apReadPhase = 'turn_to';
@@ -357,7 +344,7 @@ function updateAutoplay(delta) {
         return;
       }
 
-      // ── Stop svolta all'incrocio ───────────────────────────────────────────
+      // ── Svolta all'incrocio ───────────────────────────────────────────────
       if (apWalkedDist >= apWalkDist) {
         apIntersCount++;
         apWalkedDist = 0;
@@ -367,7 +354,7 @@ function updateAutoplay(delta) {
           apSub          = 'turning';
           apTimer        = 0;
           apIntersCount  = 0;
-          apIntersTarget = Math.ceil(Math.random() * 5);
+          apIntersTarget = 5 + Math.floor(Math.random() * 6); // 5–10
         } else {
           apWalkDist = distToNextIntersection(camObj.position, apDirIdx);
         }
@@ -381,61 +368,39 @@ function updateAutoplay(delta) {
   } else if (apSub === 'reading') {
 
     if (apReadPhase === 'turn_to') {
-      // Svolta verso il pilastro laterale
       const t    = Math.min(1, apTimer / READING_TURN_SECS);
       const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
       let diff   = apYawTarget - apYawStart;
       diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
       camObj.rotation.y = apYawStart + diff * ease;
-
-      if (t >= 1) {
-        camObj.rotation.y = apYawStart + diff;
-        apReadPhase = 'tilt_up';
-        apTimer     = 0;
-      }
+      if (t >= 1) { camObj.rotation.y = apYawStart + diff; apReadPhase = 'tilt_up'; apTimer = 0; }
 
     } else if (apReadPhase === 'tilt_up') {
-      // Alza lo sguardo (pitch negativo = su) — quaternion-safe
       const cur  = getCameraPitch();
       const diff = READING_PITCH - cur;
       setCameraPitch(cur + diff * Math.min(1, READING_PITCH_LERP * delta));
-      if (Math.abs(diff) < 0.005) {
-        setCameraPitch(READING_PITCH);
-        apReadPhase = 'pause';
-        apTimer     = 0;
-      }
+      if (Math.abs(diff) < 0.005) { setCameraPitch(READING_PITCH); apReadPhase = 'pause'; apTimer = 0; }
 
     } else if (apReadPhase === 'pause') {
-      // Fermo a leggere
-      if (apTimer >= READING_PAUSE_SECS) {
-        apReadPhase = 'tilt_down';
-        apTimer     = 0;
-      }
+      if (apTimer >= READING_PAUSE_SECS) { apReadPhase = 'tilt_down'; apTimer = 0; }
 
     } else if (apReadPhase === 'tilt_down') {
-      // Abbassa lo sguardo — quaternion-safe
       const cur = getCameraPitch();
       setCameraPitch(cur + (0 - cur) * Math.min(1, READING_PITCH_LERP * delta));
       if (Math.abs(cur) < 0.005) {
         setCameraPitch(0);
-        // Prepara svolta di ritorno
         apYawStart  = camObj.rotation.y;
-        apYawTarget = apReadYawBack;
-        let diff    = apYawTarget - apYawStart;
-        diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
-        apYawTarget = apYawStart + diff;
+        apYawTarget = apYawStart + shortestYaw(apYawStart, apReadYawBack);
         apReadPhase = 'turn_back';
         apTimer     = 0;
       }
 
     } else if (apReadPhase === 'turn_back') {
-      // Svolta di ritorno
       const t    = Math.min(1, apTimer / READING_TURN_SECS);
       const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
       let diff   = apYawTarget - apYawStart;
       diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
       camObj.rotation.y = apYawStart + diff * ease;
-
       if (t >= 1) {
         camObj.rotation.y = apYawStart + diff;
         apYawStart  = camObj.rotation.y;
@@ -497,17 +462,16 @@ async function init() {
 
     const unknownCount = TOTAL_COUNT - knownData.length;
     const allData = [...knownData];
-
     for (let i = 0; i < unknownCount; i++) {
       allData.push({ en_name: 'Unknown', ar_name: 'غير معروف', age: '—' });
     }
-
     for (let i = allData.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [allData[i], allData[j]] = [allData[j], allData[i]];
     }
 
     addInstancedBlocks(allData);
+    createBorderPillars();
     setupControls();
     animate();
 
@@ -515,6 +479,32 @@ async function init() {
   } catch (err) {
     console.error('Errore caricamento dati:', err);
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// MATERIALE PILASTRO CONDIVISO
+// ─────────────────────────────────────────────────────────────
+function createPillarMaterial() {
+  const textureLoader = new THREE.TextureLoader();
+  function loadTex(path, repeatS = 1.2, repeatT = 2.4) {
+    const t = textureLoader.load(path);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(repeatS, repeatT);
+    return t;
+  }
+  return new THREE.MeshStandardMaterial({
+    map:            loadTex('lichen_rock_diff_1k.jpg'),
+    normalMap:      loadTex('lichen_rock_nor_gl_1k.jpg'),
+    normalScale:    new THREE.Vector2(2.0, 2.0),
+    roughnessMap:   loadTex('lichen_rock_rough_1k.jpg'),
+    roughness:      1.0,
+    metalnessMap:   loadTex('lichen_rock_arm_1k.jpg'),
+    metalness:      0.08,
+    aoMap:          loadTex('lichen_rock_ao_1k.jpg'),
+    aoMapIntensity: 1.4,
+    color:          0xffffff,
+    side:           THREE.FrontSide
+  });
 }
 
 function createDarkSky() {
@@ -562,8 +552,7 @@ function getTerrainHeight(x, z) {
   const h2 = Math.sin(x * freq2 + 1.5) * Math.sin(z * freq2 + 1.2) * 0.4;
   const h3 = Math.sin(x * freq3 * 2) * 0.15 + Math.cos(z * freq3 * 2) * 0.15;
   const detail = Math.sin(x * 0.4) * Math.cos(z * 0.4) * 0.1;
-  let height = h1 + h2 + h3 + detail;
-  return Math.max(-0.6, Math.min(0.7, height));
+  return Math.max(-0.6, Math.min(0.7, h1 + h2 + h3 + detail));
 }
 
 function createTerrain(width, depth, segments) {
@@ -703,7 +692,6 @@ function setupFootstepAudio() {
   footstepAudio.volume = 0.5;
 }
 
-// ── Helper: avvia il gioco senza pointer lock (usato su mobile) ───────────────
 function startGameDirectly() {
   const instructions = document.getElementById('instructions');
   instructions.style.display = 'none';
@@ -712,13 +700,10 @@ function startGameDirectly() {
   gameState         = 'playing';
   dropping          = true;
 
-  // Unmute e play audio
   if (bgAudio) { bgAudio.muted = false; bgAudio.play(); }
   setupFootstepAudio();
 
-  // Su mobile l'autoplay parte subito, senza aspettare l'idle delay
   if (isMobile) {
-    // Piccolo delay per dare tempo ai collider di essere pronti
     setTimeout(() => startAutoplay(), 300);
   }
 }
@@ -730,29 +715,9 @@ function addInstancedBlocks(data) {
   const geometry = new THREE.BoxGeometry(pilastroWidth, pilastroHeight, pilastroWidth);
   geometry.setAttribute('uv2', geometry.attributes.uv);
 
-  const textureLoader = new THREE.TextureLoader();
-  function loadTex(path, repeatS = 1.2, repeatT = 2.4) {
-    const t = textureLoader.load(path);
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(repeatS, repeatT);
-    return t;
-  }
+  sharedPillarMaterial = createPillarMaterial();
 
-  const material = new THREE.MeshStandardMaterial({
-    map:            loadTex('lichen_rock_diff_1k.jpg'),
-    normalMap:      loadTex('lichen_rock_nor_gl_1k.jpg'),
-    normalScale:    new THREE.Vector2(2.0, 2.0),
-    roughnessMap:   loadTex('lichen_rock_rough_1k.jpg'),
-    roughness:      1.0,
-    metalnessMap:   loadTex('lichen_rock_arm_1k.jpg'),
-    metalness:      0.08,
-    aoMap:          loadTex('lichen_rock_ao_1k.jpg'),
-    aoMapIntensity: 1.4,
-    color:          0xffffff,
-    side:           THREE.FrontSide
-  });
-
-  instancedMesh = new THREE.InstancedMesh(geometry, material, data.length);
+  instancedMesh = new THREE.InstancedMesh(geometry, sharedPillarMaterial, data.length);
   instancedMesh.castShadow = instancedMesh.receiveShadow = true;
   scene.add(instancedMesh);
 
@@ -787,6 +752,96 @@ function addInstancedBlocks(data) {
   instancedMesh.instanceMatrix.needsUpdate = true;
 }
 
+// ─────────────────────────────────────────────────────────────
+// RECINZIONE PERIMETRALE
+// Stessa geometria e materiale dei pilastri interni.
+// ~4 × gridSize ≈ ~900 istanze su 50k+: peso trascurabile.
+// ─────────────────────────────────────────────────────────────
+function createBorderPillars() {
+  const pilastroWidth  = 2.3;
+  const pilastroHeight = 4.6;
+  const hw = pilastroWidth / 2;
+
+  const outerOffset = SPACING;
+  const minC = -apGridHalfSize - outerOffset;
+  const maxC =  apGridHalfSize + outerOffset;
+
+  const borderPos = [];
+
+  // Lati nord (z = maxC) e sud (z = minC)
+  for (let x = minC; x <= maxC + 0.01; x += SPACING) {
+    borderPos.push({ x: snap(x), z: minC });
+    borderPos.push({ x: snap(x), z: maxC });
+  }
+  // Lati est (x = maxC) e ovest (x = minC) — angoli già inclusi sopra
+  for (let z = minC + SPACING; z < maxC - 0.01; z += SPACING) {
+    borderPos.push({ x: minC, z: snap(z) });
+    borderPos.push({ x: maxC, z: snap(z) });
+  }
+
+  const geometry = new THREE.BoxGeometry(pilastroWidth, pilastroHeight, pilastroWidth);
+  geometry.setAttribute('uv2', geometry.attributes.uv);
+
+  const borderMesh = new THREE.InstancedMesh(geometry, sharedPillarMaterial, borderPos.length);
+  borderMesh.castShadow = borderMesh.receiveShadow = true;
+  scene.add(borderMesh);
+
+  borderPos.forEach(({ x, z }, i) => {
+    const terrainY = getTerrainHeight(x, z);
+    const y = (pilastroHeight / 2) + terrainY;
+    borderMesh.setMatrixAt(i, new THREE.Matrix4().makeTranslation(x, y, z));
+
+    colliderBoxes.push(new THREE.Box3(
+      new THREE.Vector3(x - hw, terrainY - 1,              z - hw),
+      new THREE.Vector3(x + hw, terrainY + pilastroHeight, z + hw)
+    ));
+  });
+
+  borderMesh.instanceMatrix.needsUpdate = true;
+
+  // ── Muri invisibili continui — cintura di sicurezza assoluta ─────────────
+  const wallH = 20;
+  const wallD = 1.0;
+  const edge  = maxC + hw;
+
+  [
+    new THREE.Box3( // Nord
+      new THREE.Vector3(-edge - wallD, -5,  edge),
+      new THREE.Vector3( edge + wallD, wallH, edge + wallD)
+    ),
+    new THREE.Box3( // Sud
+      new THREE.Vector3(-edge - wallD, -5, -edge - wallD),
+      new THREE.Vector3( edge + wallD, wallH, -edge)
+    ),
+    new THREE.Box3( // Est
+      new THREE.Vector3( edge,         -5, -edge - wallD),
+      new THREE.Vector3( edge + wallD, wallH,  edge + wallD)
+    ),
+    new THREE.Box3( // Ovest
+      new THREE.Vector3(-edge - wallD, -5, -edge - wallD),
+      new THREE.Vector3(-edge,         wallH,  edge + wallD)
+    ),
+  ].forEach(w => colliderBoxes.push(w));
+
+  console.log(`Recinzione: ${borderPos.length} pilastri al perimetro.`);
+}
+
+// Allinea al multiplo di SPACING più vicino
+function snap(v) {
+  return Math.round(v / SPACING) * SPACING;
+}
+
+// Differenza angolare più breve tra due yaw, in [-π, π].
+// Usa doppio modulo per evitare il segno negativo di % in JS.
+function shortestYaw(from, to) {
+  let d = (to - from) % (Math.PI * 2);
+  if (d >  Math.PI) d -= Math.PI * 2;
+  if (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
+// ─────────────────────────────────────────────────────────────
+
 function setupControls() {
   controls = new PointerLockControls(camera, renderer.domElement);
   scene.add(controls.getObject());
@@ -795,7 +850,6 @@ function setupControls() {
   const pauseScreen  = document.getElementById('pause-screen');
 
   if (!isMobile) {
-    // ── Desktop: flusso normale con pointer lock ────────────────────────────
     controls.addEventListener('lock', () => {
       if (gameState === 'intro') {
         instructions.style.display = 'none';
@@ -806,7 +860,6 @@ function setupControls() {
       pauseScreen.classList.add('hidden');
       gameState = 'playing';
       lastUserInputTime = performance.now() / 1000;
-      // Unmute audio solo ora (primo gesto utente garantito)
       if (bgAudio) { bgAudio.muted = false; bgAudio.play(); }
     });
 
@@ -860,17 +913,15 @@ function setupControls() {
     document.addEventListener('mousemove', (e) => {
       if (!controls.isLocked || gameState !== 'playing') return;
       const moved = Math.abs(e.movementX) + Math.abs(e.movementY);
-      if (moved < 6) return; // ignora jitter del sistema
+      if (moved < 6) return;
       lastUserInputTime = performance.now() / 1000;
       if (autoplayActive) stopAutoplay();
     });
 
   } else {
-    // ── Mobile: nessun pointer lock, solo tap su Enter ──────────────────────
     document.getElementById("start").addEventListener('click', () => {
       if (gameState === 'intro') startGameDirectly();
     });
-    // Nasconde il tasto Resume (su mobile non serve, l'autoplay è permanente)
     document.getElementById("resume").addEventListener('click', () => {
       if (gameState === 'paused') {
         pauseScreen.classList.add('hidden');
@@ -969,10 +1020,10 @@ function createEngravingPlanes(item) {
   const geo = new THREE.PlaneGeometry(hw * 2, ph);
 
   const faces = [
-    { pos: new THREE.Vector3(cx,            cy, cz + hw + offset), rotY:  0,           order: 1 },
-    { pos: new THREE.Vector3(cx,            cy, cz - hw - offset), rotY:  Math.PI,     order: 2 },
-    { pos: new THREE.Vector3(cx + hw + offset, cy, cz),            rotY:  Math.PI / 2, order: 3 },
-    { pos: new THREE.Vector3(cx - hw - offset, cy, cz),            rotY: -Math.PI / 2, order: 4 },
+    { pos: new THREE.Vector3(cx,               cy, cz + hw + offset), rotY:  0,           order: 1 },
+    { pos: new THREE.Vector3(cx,               cy, cz - hw - offset), rotY:  Math.PI,     order: 2 },
+    { pos: new THREE.Vector3(cx + hw + offset, cy, cz),               rotY:  Math.PI / 2, order: 3 },
+    { pos: new THREE.Vector3(cx - hw - offset, cy, cz),               rotY: -Math.PI / 2, order: 4 },
   ];
 
   return faces.map(({ pos, rotY, order }) => {
@@ -991,10 +1042,6 @@ function createEngravingPlanes(item) {
   });
 }
 
-// ─────────────────────────────────────────────────────────────
-// Ritorna true se il gioco è "attivo" indipendentemente dal pointer lock
-// (desktop: richiede isLocked; mobile: basta gameState === 'playing')
-// ─────────────────────────────────────────────────────────────
 function isGameActive() {
   return isMobile ? gameState === 'playing' : controls.isLocked;
 }
@@ -1007,7 +1054,6 @@ function animate() {
   if (gameState === 'playing' && gameStartTime) {
     updateEyeAdaptation(currentTime);
 
-    // Attiva autoplay desktop dopo idle
     if (!isMobile && lastUserInputTime !== null && !autoplayActive && controls.isLocked && !dropping) {
       if ((currentTime - lastUserInputTime) >= AUTOPLAY_IDLE_DELAY) {
         startAutoplay();
@@ -1025,7 +1071,7 @@ function animate() {
     if (camera.position.y <= GROUND_HEIGHT_OFFSET + 0.6) dropping = false;
   }
 
-  // Movimento manuale (solo desktop, solo se non in autoplay)
+  // Movimento manuale
   if (!isMobile && controls.isLocked && !dropping && !autoplayActive) {
     const currentPos = controls.getObject().position.clone();
 
