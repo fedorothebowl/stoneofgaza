@@ -32,8 +32,9 @@ let footstepAudio;
 
 // Terreno collinoso
 let terrainMesh;
-let terrainWidth = 0;
-let terrainDepth = 0;
+let terrainWidth  = 0;
+let terrainDepth  = 0;
+let apGridHalfSize = 0; // metà della griglia — serve per calcolare le intersezioni
 
 // Variabili per l'effetto di adattamento al buio
 let gameStartTime = null;
@@ -59,6 +60,314 @@ const TARGET_FILL         = 0.70;
 const TARGET_BACK         = 0.50;
 const TARGET_SKY          = 1.30;
 const TARGET_FOG_DENSITY  = 0.01;
+
+// ─────────────────────────────────────────────────────────────
+// AUTOPLAY
+// ─────────────────────────────────────────────────────────────
+const AUTOPLAY_IDLE_DELAY   = 3;    // secondi di inattività prima di partire
+const AUTOPLAY_WALK_SPEED   = 1.44; // 20% più lento di prima (1.8 × 0.8)
+const AUTOPLAY_TURN_SECONDS = 0.85; // durata della rotazione fluida di 90°
+
+let lastUserInputTime = null; // null = intro/gioco non ancora iniziato
+let autoplayActive    = false;
+
+let apSub        = 'walking'; // 'walking' | 'pausing' | 'turning'
+let apTimer      = 0;
+let apWalkDist    = 0;  // distanza target fino al prossimo incrocio (unità Three.js)
+let apWalkedDist  = 0;  // distanza percorsa nel segmento corrente
+let apPauseDur    = 0;
+let apDirIdx      = 0;
+let apIntersCount  = 0;  // incroci attraversati nel segmento corrente
+let apIntersTarget = 1;  // dopo quanti incroci girare (1–5, casuale)
+let apSnapTarget   = 0;  // coordinata world del centro corridoio verso cui fare snap
+
+// Restituisce la coordinata del centro corridoio più vicino
+// sull'asse perpendicolare alla direzione di marcia.
+// I pilastri stanno a n*SPACING - apGridHalfSize,
+// i corridoi (centri) stanno a (n+0.5)*SPACING - apGridHalfSize.
+function nearestCorridorCenter(pos, dirIdx) {
+  const dir = AP_DIRS[dirIdx];
+  // Asse perpendicolare: se si cammina su Z uso X, e viceversa
+  const v = dir.z !== 0 ? pos.x : pos.z;
+  const normalized = v + apGridHalfSize;
+  const cell = Math.round(normalized / SPACING - 0.5);
+  return (cell + 0.5) * SPACING - apGridHalfSize;
+}
+
+// Le 4 direzioni cardinali world-space allineate ai corridoi della griglia
+const AP_DIRS = [
+  new THREE.Vector3( 0, 0, -1), // Nord
+  new THREE.Vector3( 1, 0,  0), // Est
+  new THREE.Vector3( 0, 0,  1), // Sud
+  new THREE.Vector3(-1, 0,  0), // Ovest
+];
+
+let apYawStart  = 0;
+let apYawTarget = 0;
+
+// Converte una direzione world-space nello yaw di PointerLockControls
+// look_dir = (−sin yaw, 0, −cos yaw)  →  yaw = atan2(−dx, −dz)
+function dirToYaw(dir) {
+  return Math.atan2(-dir.x, -dir.z);
+}
+
+// Controlla se il corridoio nella direzione indicata è libero per almeno checkDist unità
+function isDirectionClear(fromPos, dirIdx, checkDist = 4.0) {
+  const dir     = AP_DIRS[dirIdx];
+  const testPos = fromPos.clone().addScaledVector(dir, checkDist);
+  const sphere  = new THREE.Sphere(testPos, CAMERA_RADIUS * 1.2); // margine extra
+  for (const box of colliderBoxes) {
+    if (box.intersectsSphere(sphere)) return false;
+  }
+  return true;
+}
+
+function apPickDir(emergencyCheckDist = SPACING * 0.8) {
+  const camPos = controls.getObject().position;
+
+  // Ordine preferito: sinistra e destra (ordine random), poi dritto, poi indietro
+  const right = (apDirIdx + 1) % 4;
+  const left  = (apDirIdx + 3) % 4;
+  const back  = (apDirIdx + 2) % 4;
+
+  const turns = Math.random() < 0.5 ? [right, left] : [left, right];
+  const candidates = [...turns, apDirIdx, back];
+
+  let chosen = apDirIdx; // fallback
+  for (const c of candidates) {
+    if (isDirectionClear(camPos, c, emergencyCheckDist)) { chosen = c; break; }
+  }
+
+  apDirIdx    = chosen;
+  apYawStart  = controls.getObject().rotation.y;
+  apYawTarget = dirToYaw(AP_DIRS[apDirIdx]);
+
+  let diff = apYawTarget - apYawStart;
+  diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
+  apYawTarget = apYawStart + diff;
+}
+
+// Calcola la distanza esatta dal punto corrente al prossimo incrocio tra 4 pilastri,
+// nella direzione di marcia indicata.
+//
+// I pilastri sono a posizioni world = col*SPACING - apGridHalfSize.
+// In coordinate normalizzate (+ apGridHalfSize) i pilastri stanno a n*SPACING (interi).
+// Le intersezioni tra 4 pilastri stanno a (n+0.5)*SPACING in coordinate normalizzate,
+// cioè a (n+0.5)*SPACING - apGridHalfSize in coordinate world.
+//
+// La "fase" è la posizione frazionaria all'interno di una cella [0, 1):
+//   fase = 0   → sopra un pilastro (mai in pratica, ci sono i collider)
+//   fase = 0.5 → al centro dell'incrocio tra 4 pilastri  ← qui si gira
+function distToNextIntersection(pos, dirIdx) {
+  const dir   = AP_DIRS[dirIdx];
+  const S     = SPACING;
+  const dSign = dir.x !== 0 ? dir.x : dir.z;
+  const v     = (dir.x !== 0 ? pos.x : pos.z) + apGridHalfSize; // coordinata normalizzata
+
+  const phase = ((v / S) % 1 + 1) % 1; // [0, 1)
+
+  let dist;
+  if (dSign > 0) {
+    // Avanzando: prossima intersezione a fase 0.5
+    dist = phase < 0.5 ? (0.5 - phase) * S : (1.5 - phase) * S;
+  } else {
+    // Indietreggiando: prossima intersezione a fase 0.5 nella direzione negativa
+    dist = phase > 0.5 ? (phase - 0.5) * S : (phase + 0.5) * S;
+  }
+
+  // Se siamo già sopra un incrocio (o vicinissimi), saltiamo al successivo
+  if (dist < CAMERA_RADIUS) dist += S;
+
+  return dist;
+}
+
+function startAutoplay() {
+  autoplayActive = true;
+  apTimer = 0;
+
+  // FIX 2: snap immediato — azzera pitch (x) e roll (z) prima che parta qualsiasi lerp.
+  // Un frame di Euler YXZ con z != 0 basta a causare l'effetto "testa inclinata".
+  camera.rotation.x = 0;
+  camera.rotation.z = 0;
+
+  // Aggancia la direzione cardinale più vicina allo yaw attuale,
+  // preferendo quelle con corridoio libero davanti
+  const curYaw = controls.getObject().rotation.y;
+  const camPos = controls.getObject().position;
+
+  let best = 0, bestDist = Infinity;
+  AP_DIRS.forEach((d, i) => {
+    let diff = Math.abs(dirToYaw(d) - curYaw);
+    diff = Math.min(diff, Math.PI * 2 - diff);
+    // Usa checkDist corto: non vogliamo escludere corridoi liberi vicini
+    const penalty = isDirectionClear(camPos, i, CAMERA_RADIUS * 2.5) ? 0 : Math.PI;
+    if (diff + penalty < bestDist) { bestDist = diff + penalty; best = i; }
+  });
+
+  apDirIdx    = best;
+  apYawStart  = curYaw;
+  apYawTarget = dirToYaw(AP_DIRS[apDirIdx]);
+
+  apSub          = 'snapping';
+  apSnapTarget   = nearestCorridorCenter(controls.getObject().position, apDirIdx);
+  apWalkDist     = distToNextIntersection(controls.getObject().position, apDirIdx);
+  apWalkedDist   = 0;
+  apIntersCount  = 0;
+  apIntersTarget = Math.ceil(Math.random() * 5); // 1–5
+}
+
+function stopAutoplay() {
+  autoplayActive = false;
+  move.forward = move.back = move.left = move.right = false;
+  if (footstepAudio && !footstepAudio.paused) {
+    footstepAudio.pause();
+    footstepAudio.currentTime = 0;
+  }
+}
+
+function updateAutoplay(delta) {
+  if (!autoplayActive) return;
+
+  const camObj = controls.getObject();
+
+  // ── Reset pitch → 0 (parallelo al pavimento) ─────────────────────────────
+  if (Math.abs(camera.rotation.x) > 0.001) {
+    camera.rotation.x += (0 - camera.rotation.x) * Math.min(1, 6 * delta);
+  } else {
+    camera.rotation.x = 0;
+  }
+  // NB: camera.rotation.z non viene toccato qui — lo snap è solo in startAutoplay.
+  // Forzarlo ad ogni frame interferisce con PointerLockControls al momento del handoff.
+
+  apTimer += delta;
+
+  // ── Snapping — centra la camera nel corridoio prima di camminare ──────────
+  if (apSub === 'snapping') {
+    const dir        = AP_DIRS[apDirIdx];
+    const SNAP_SPEED = 4.0; // unità/secondo — abbastanza rapido ma visibile
+
+    // Lerp sull'asse perpendicolare verso il centro corridoio
+    if (dir.z !== 0) {
+      // Cammino su Z → correggo X
+      const diff = apSnapTarget - camObj.position.x;
+      if (Math.abs(diff) < 0.02) {
+        camObj.position.x = apSnapTarget;
+        apSub = 'walking';
+      } else {
+        camObj.position.x += Math.sign(diff) * Math.min(Math.abs(diff), SNAP_SPEED * delta);
+      }
+    } else {
+      // Cammino su X → correggo Z
+      const diff = apSnapTarget - camObj.position.z;
+      if (Math.abs(diff) < 0.02) {
+        camObj.position.z = apSnapTarget;
+        apSub = 'walking';
+      } else {
+        camObj.position.z += Math.sign(diff) * Math.min(Math.abs(diff), SNAP_SPEED * delta);
+      }
+    }
+
+    // Smooth yaw verso la direzione cardinale anche durante lo snap
+    let yawDiff = apYawTarget - camObj.rotation.y;
+    yawDiff = ((yawDiff + Math.PI) % (Math.PI * 2)) - Math.PI;
+    camObj.rotation.y += yawDiff * Math.min(1, 8 * delta);
+
+    return; // non cammina finché non è centrato
+  }
+
+  // ── Walking ───────────────────────────────────────────────────────────────
+  if (apSub === 'walking') {
+    const dir  = AP_DIRS[apDirIdx];
+    const step = AUTOPLAY_WALK_SPEED * delta;
+    const newPos = camObj.position.clone().addScaledVector(dir, step);
+    const sphere = new THREE.Sphere(newPos, CAMERA_RADIUS);
+
+    let blocked = false;
+    for (const box of colliderBoxes) {
+      if (box.intersectsSphere(sphere)) { blocked = true; break; }
+    }
+
+    if (blocked) {
+      // Muro davanti: usa checkDist corto per il test laterale
+      // così non "vede" il pilastro successivo nel corridoio affiancato
+      apPickDir(CAMERA_RADIUS * 2.5);
+      apSub        = 'turning';
+      apTimer      = 0;
+      apWalkedDist = 0;
+      if (footstepAudio && !footstepAudio.paused) {
+        footstepAudio.pause();
+        footstepAudio.currentTime = 0;
+      }
+    } else {
+      camObj.position.copy(newPos);
+
+      // Adatta altezza al terreno
+      const th = getTerrainHeight(newPos.x, newPos.z);
+      camObj.position.y += ((th + GROUND_HEIGHT_OFFSET) - camObj.position.y) * 0.25;
+
+      // Smooth yaw verso la direzione cardinale target
+      let yawDiff = apYawTarget - camObj.rotation.y;
+      yawDiff = ((yawDiff + Math.PI) % (Math.PI * 2)) - Math.PI;
+      camObj.rotation.y += yawDiff * Math.min(1, 8 * delta);
+
+      // Accumulazione distanza percorsa
+      apWalkedDist += step;
+
+      // Passi
+      if (footstepAudio && footstepAudio.paused) footstepAudio.play();
+
+      if (apWalkedDist >= apWalkDist) {
+        apIntersCount++;
+        apWalkedDist = 0;
+
+        if (apIntersCount >= apIntersTarget) {
+          // Raggiunto il numero di incroci: gira a sinistra o destra
+          apPickDir(SPACING * 0.8);
+          apSub          = 'turning';
+          apTimer        = 0;
+          apIntersCount  = 0;
+          apIntersTarget = Math.ceil(Math.random() * 5); // nuovo target 1–5
+        } else {
+          // Incrocio attraversato ma non ancora il target: continua dritto
+          apWalkDist = distToNextIntersection(camObj.position, apDirIdx);
+        }
+        if (footstepAudio && !footstepAudio.paused) {
+          footstepAudio.pause();
+          footstepAudio.currentTime = 0;
+        }
+      }
+    }
+
+  // ── Pausing (rimosso — la svolta avviene direttamente da walking) ─────────
+  } else if (apSub === 'pausing') {
+    // stato mantenuto per compatibilità ma non più usato attivamente
+    apSub        = 'walking';
+    apWalkDist   = distToNextIntersection(controls.getObject().position, apDirIdx);
+    apWalkedDist = 0;
+
+  // ── Turning ───────────────────────────────────────────────────────────────
+  } else if (apSub === 'turning') {
+    const t    = Math.min(1, apTimer / AUTOPLAY_TURN_SECONDS);
+    // ease in-out quadratica
+    const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+
+    let diff = apYawTarget - apYawStart;
+    diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
+    camObj.rotation.y = apYawStart + diff * ease;
+
+    if (t >= 1) {
+      camObj.rotation.y = apYawStart + diff; // snap finale
+      apYawStart        = camObj.rotation.y;
+      apSnapTarget   = nearestCorridorCenter(camObj.position, apDirIdx);
+      apSub          = 'snapping';
+      apTimer        = 0;
+      apWalkDist     = distToNextIntersection(camObj.position, apDirIdx);
+      apWalkedDist   = 0;
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
 
 init();
 
@@ -91,6 +400,7 @@ async function init() {
       });
     }
 
+    // Fisher-Yates shuffle
     for (let i = allData.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [allData[i], allData[j]] = [allData[j], allData[i]];
@@ -138,7 +448,6 @@ function createDarkSky() {
       topColor:    { value: new THREE.Color(0x505050) },
       midColor:    { value: new THREE.Color(0x606060) },
       bottomColor: { value: new THREE.Color(0x404040) },
-      // FIX 1: usa INITIAL_SKY così il cielo parte già al valore corretto
       intensity:   { value: INITIAL_SKY }
     },
     side: THREE.BackSide
@@ -203,7 +512,6 @@ function setupScene() {
   skyMesh = createDarkSky();
   scene.add(skyMesh);
 
-  // FIX 1: fog inizia già al valore INITIAL_FOG_DENSITY
   scene.fog = new THREE.FogExp2(0x202020, INITIAL_FOG_DENSITY);
 
   camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 5000);
@@ -219,7 +527,6 @@ function setupScene() {
   let count = document.getElementById("sad-count");
   count.innerHTML = TOTAL_COUNT;
 
-  // FIX 1: tutte le intensità iniziali coincidono con INITIAL_* usati in updateEyeAdaptation
   hemisphereLight = new THREE.HemisphereLight(0x404040, 0x202020, INITIAL_HEMISPHERE);
   scene.add(hemisphereLight);
 
@@ -230,13 +537,11 @@ function setupScene() {
   dirLight.shadow.mapSize.height = 2048;
   dirLight.shadow.camera.near   = 0.5;
   dirLight.shadow.camera.far    = 300;
-  // FIX 2: bounds più ampi per coprire l'area intorno al giocatore
   dirLight.shadow.camera.left   = -80;
   dirLight.shadow.camera.right  =  80;
   dirLight.shadow.camera.top    =  80;
   dirLight.shadow.camera.bottom = -80;
   scene.add(dirLight);
-  // FIX 2: il target deve essere aggiunto alla scena per poter essere aggiornato
   scene.add(dirLight.target);
 
   ambientLight = new THREE.AmbientLight(0x303030, INITIAL_AMBIENT);
@@ -326,10 +631,7 @@ function addInstancedBlocks(data) {
   const pilastroWidth  = 2.3;
   const pilastroHeight = 4.6;
 
-  // Geometria semplice — nessun segmento extra, performance ok su decine di migliaia di istanze
   const geometry = new THREE.BoxGeometry(pilastroWidth, pilastroHeight, pilastroWidth);
-
-  // aoMap richiede uv2 — lo copiamo dagli UV primari
   geometry.setAttribute('uv2', geometry.attributes.uv);
 
   const textureLoader = new THREE.TextureLoader();
@@ -343,10 +645,9 @@ function addInstancedBlocks(data) {
   }
 
   const diffuseMap   = loadTex('lichen_rock_diff_1k.jpg');
-  const normalMap    = loadTex('lichen_rock_nor_gl_1k.jpg'); // GL convention = compatibile Three.js
+  const normalMap    = loadTex('lichen_rock_nor_gl_1k.jpg');
   const roughnessMap = loadTex('lichen_rock_rough_1k.jpg');
   const aoMap        = loadTex('lichen_rock_ao_1k.jpg');
-  // arm_1k contiene AO(R) Roughness(G) Metalness(B) — lo usiamo per metalness
   const armMap       = loadTex('lichen_rock_arm_1k.jpg');
 
   const material = new THREE.MeshStandardMaterial({
@@ -370,6 +671,7 @@ function addInstancedBlocks(data) {
 
   const gridSize = Math.ceil(Math.sqrt(data.length));
   const halfGrid = (gridSize - 1) * SPACING / 2;
+  apGridHalfSize = halfGrid; // rende halfGrid accessibile alle funzioni autoplay
 
   data.forEach((item, index) => {
     const row = Math.floor(index / gridSize);
@@ -397,7 +699,7 @@ function addInstancedBlocks(data) {
       en_name: item.en_name,
       ar_name: item.ar_name,
       age:     item.age,
-      planes:  []   // plane meshes con testo inciso, creati/distrutti on demand
+      planes:  []
     });
   });
 
@@ -420,6 +722,7 @@ function setupControls() {
     }
     pauseScreen.classList.add('hidden');
     gameState = 'playing';
+    lastUserInputTime = performance.now() / 1000; // inizia il countdown autoplay
     if (bgAudio) bgAudio.play();
   });
 
@@ -436,6 +739,8 @@ function setupControls() {
       move.back    = false;
       move.left    = false;
       move.right   = false;
+      // Se l'autoplay era attivo lo fermiamo
+      if (autoplayActive) stopAutoplay();
     }
   });
 
@@ -453,6 +758,11 @@ function setupControls() {
   });
 
   window.addEventListener('keydown', (e) => {
+    // Qualsiasi tasto → registra input e ferma autoplay
+    if (gameState === 'playing') {
+      lastUserInputTime = performance.now() / 1000;
+      if (autoplayActive) stopAutoplay();
+    }
     switch (e.code) {
       case 'ArrowUp':    case 'KeyW': move.forward = true;  break;
       case 'ArrowDown':  case 'KeyS': move.back    = true;  break;
@@ -469,6 +779,15 @@ function setupControls() {
       case 'ArrowRight': case 'KeyD': move.right   = false; break;
     }
   });
+
+  // Movimento mouse — cancella autoplay solo se il movimento è intenzionale (> 3px)
+  document.addEventListener('mousemove', (e) => {
+    if (!controls.isLocked || gameState !== 'playing') return;
+    const moved = Math.abs(e.movementX) + Math.abs(e.movementY);
+    if (moved < 3) return; // ignora jitter del sistema
+    lastUserInputTime = performance.now() / 1000;
+    if (autoplayActive) stopAutoplay();
+  });
 }
 
 function onWindowResize() {
@@ -481,13 +800,12 @@ function updateEyeAdaptation(currentTime) {
   if (!gameStartTime) return;
 
   const elapsed  = currentTime - gameStartTime;
-  const duration = 20; // secondi di transizione
+  const duration = 20;
 
   let factor = Math.min(1, elapsed / duration);
-  factor = Math.pow(factor, 1.2); // inizio più lento, poi accelera
+  factor = Math.pow(factor, 1.2);
 
-  // FIX 1: i valori INITIAL coincidono con quelli usati in setupScene()
-  hemisphereLight.intensity = INITIAL_HEMISPHERE + (TARGET_HEMISPHERE  - INITIAL_HEMISPHERE)  * factor;
+  hemisphereLight.intensity = INITIAL_HEMISPHERE  + (TARGET_HEMISPHERE  - INITIAL_HEMISPHERE)  * factor;
   dirLight.intensity        = INITIAL_DIRECTIONAL + (TARGET_DIRECTIONAL - INITIAL_DIRECTIONAL) * factor;
   ambientLight.intensity    = INITIAL_AMBIENT     + (TARGET_AMBIENT     - INITIAL_AMBIENT)     * factor;
   fillLight.intensity       = INITIAL_FILL        + (TARGET_FILL        - INITIAL_FILL)        * factor;
@@ -506,44 +824,32 @@ function updateEyeAdaptation(currentTime) {
 // ─────────────────────────────────────────────────────────────
 
 function createEngravedTexture(en_name, ar_name, age) {
-  // Risoluzione alta per testo nitido — il canvas viene scalato alla size della plane
-  // quindi più pixel = meno sgranatura quando Three.js la mappa sulla geometria
   const W = 512, H = 1024;
   const canvas = document.createElement('canvas');
   canvas.width  = W;
   canvas.height = H;
   const ctx = canvas.getContext('2d');
 
-  // Sfondo completamente trasparente: la pietra vera rimane visibile sotto
   ctx.clearRect(0, 0, W, H);
 
-  // ── Funzione incisione ──────────────────────────────────────────────────────
-  // Simula un segno inciso nella pietra con tre pass:
-  //   1. solco scuro (offset +x+y) = profondità del taglio
-  //   2. luce fredda (offset -x-y) = bordo illuminato del solco
-  //   3. testo principale grigio medio = superficie incisa
   function carveText(text, x, y, fontSize, weight = 'normal') {
     if (!text || text === '—' || text === '') return;
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'middle';
     ctx.font = `${weight} ${fontSize}px 'Georgia', serif`;
 
-    const d = fontSize * 0.055; // offset proporzionale alla dimensione
+    const d = fontSize * 0.055;
 
-    // 1. Solco — nero semi-trasparente, offset basso-destra
     ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
     ctx.fillText(text, x + d, y + d);
 
-    // 2. Luce — grigio chiarissimo, offset alto-sinistra
     ctx.fillStyle = 'rgba(210, 210, 210, 0.18)';
     ctx.fillText(text, x - d * 0.5, y - d * 0.5);
 
-    // 3. Testo: grigio medio-scuro, non bianco
     ctx.fillStyle = 'rgba(145, 140, 135, 0.88)';
     ctx.fillText(text, x, y);
   }
 
-  // ── Wrap testo su più righe ─────────────────────────────────────────────────
   function wrapText(text, maxWidth, fontSize, weight = 'normal') {
     ctx.font = `${weight} ${fontSize}px 'Georgia', serif`;
     const words = (text || '').split(' ');
@@ -562,40 +868,33 @@ function createEngravedTexture(en_name, ar_name, age) {
     return lines;
   }
 
-  // ── Layout testo ────────────────────────────────────────────────────────────
-  // Ordine richiesto: nome arabo / nome europeo / età
   const maxW   = W - 80;
   const cx     = W / 2;
-  const arSize = 34;   // nome arabo — leggermente più grande
-  const enSize = 30;   // nome europeo
-  const agSize = 24;   // età
+  const arSize = 34;
+  const enSize = 30;
+  const agSize = 24;
 
-  const arLines = wrapText(ar_name  || 'غير معروف',     maxW, arSize, 'normal');
-  const enLines = wrapText(en_name  || 'Unknown',        maxW, enSize, 'normal');
+  const arLines = wrapText(ar_name  || 'غير معروف', maxW, arSize, 'normal');
+  const enLines = wrapText(en_name  || 'Unknown',   maxW, enSize, 'normal');
 
-  const lineH = 46; // interlinea
+  const lineH = 46;
 
-  // Calcola altezza totale del blocco testo per centrarlo verticalmente
-  const totalLines = arLines.length + enLines.length + 1; // +1 per età
-  const blockH     = totalLines * lineH + 30; // 30 = gap tra gruppi
+  const totalLines = arLines.length + enLines.length + 1;
+  const blockH     = totalLines * lineH + 30;
   let y = (H - blockH) / 2;
 
-  // Nome arabo
   arLines.forEach(line => {
     carveText(line, cx, y, arSize, 'normal');
     y += lineH;
   });
 
-  // Piccolo gap tra arabo ed europeo
   y += 18;
 
-  // Nome europeo
   enLines.forEach(line => {
     carveText(line, cx, y, enSize, 'normal');
     y += lineH;
   });
 
-  // Gap e età
   y += 22;
   const ageLabel = (age !== undefined && age !== null && String(age).trim() !== '' && age !== '—')
     ? `Age: ${age}`
@@ -603,7 +902,6 @@ function createEngravedTexture(en_name, ar_name, age) {
   if (ageLabel) carveText(ageLabel, cx, y, agSize, 'normal');
 
   const tex = new THREE.CanvasTexture(canvas);
-  // Filtraggio lineare per bordi netti anche a distanza ravvicinata
   tex.minFilter = THREE.LinearFilter;
   tex.magFilter = THREE.LinearFilter;
   return tex;
@@ -622,10 +920,10 @@ function createEngravingPlanes(item) {
   const geo = new THREE.PlaneGeometry(hw * 2, ph);
 
   const faces = [
-    { pos: new THREE.Vector3(cx,               cy, cz + hw + offset), rotY:  0,           order: 1 },
-    { pos: new THREE.Vector3(cx,               cy, cz - hw - offset), rotY:  Math.PI,     order: 2 },
-    { pos: new THREE.Vector3(cx + hw + offset, cy, cz),               rotY:  Math.PI / 2, order: 3 },
-    { pos: new THREE.Vector3(cx - hw - offset, cy, cz),               rotY: -Math.PI / 2, order: 4 },
+    { pos: new THREE.Vector3(cx,               cy, cz + hw + offset), rotY:  0,            order: 1 },
+    { pos: new THREE.Vector3(cx,               cy, cz - hw - offset), rotY:  Math.PI,      order: 2 },
+    { pos: new THREE.Vector3(cx + hw + offset, cy, cz),               rotY:  Math.PI / 2,  order: 3 },
+    { pos: new THREE.Vector3(cx - hw - offset, cy, cz),               rotY: -Math.PI / 2,  order: 4 },
   ];
 
   return faces.map(({ pos, rotY, order }) => {
@@ -634,12 +932,12 @@ function createEngravingPlanes(item) {
       transparent:       true,
       opacity:           1.0,
       depthWrite:        false,
-      depthTest:         true,   // il pilastro oscura le facce posteriori
+      depthTest:         true,
       alphaTest:         0.0,
       roughness:         0.95,
       metalness:         0.0,
       color:             0x888888,
-      emissive:          new THREE.Color(0xffffff), // DEVE essere bianco, non nero
+      emissive:          new THREE.Color(0xffffff),
       emissiveMap:       tex,
       emissiveIntensity: 0.0,
       side:              THREE.DoubleSide
@@ -647,7 +945,7 @@ function createEngravingPlanes(item) {
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.copy(pos);
     mesh.rotation.y = rotY;
-    mesh.renderOrder = order; // ordine esplicito: evita z-sorting casuale
+    mesh.renderOrder = order;
     return mesh;
   });
 }
@@ -659,8 +957,21 @@ function animate() {
 
   if (gameState === 'playing' && gameStartTime) {
     updateEyeAdaptation(currentTime);
+
+    // ── Attiva autoplay dopo AUTOPLAY_IDLE_DELAY secondi di inattività ──────
+    if (lastUserInputTime !== null && !autoplayActive && controls.isLocked && !dropping) {
+      if ((currentTime - lastUserInputTime) >= AUTOPLAY_IDLE_DELAY) {
+        startAutoplay();
+      }
+    }
   }
 
+  // Aggiorna autoplay (gestisce movimento, yaw, reset pitch)
+  if (gameState === 'playing') {
+    updateAutoplay(delta);
+  }
+
+  // ── Caduta iniziale ───────────────────────────────────────────────────────
   if (dropping) {
     camera.position.y = Math.max(camera.position.y - 30 * delta, GROUND_HEIGHT_OFFSET + 0.5);
     if (camera.position.y <= GROUND_HEIGHT_OFFSET + 0.6) {
@@ -668,7 +979,8 @@ function animate() {
     }
   }
 
-  if (controls.isLocked && !dropping) {
+  // ── Movimento manuale (solo se non in autoplay) ───────────────────────────
+  if (controls.isLocked && !dropping && !autoplayActive) {
     const currentPos = controls.getObject().position.clone();
 
     velocity.set(
@@ -700,8 +1012,7 @@ function animate() {
       controls.getObject().position.y = currentHeight + (targetHeight - currentHeight) * 0.25;
     }
 
-    // FIX 2: aggiorna posizione luce e target ogni frame seguendo il giocatore
-    // così la shadow frustum è sempre centrata su chi cammina
+    // Luce dinamica seguendo il giocatore
     const px = controls.getObject().position.x;
     const pz = controls.getObject().position.z;
     dirLight.position.set(px - 50, 80, pz - 50);
@@ -717,7 +1028,19 @@ function animate() {
         footstepAudio.currentTime = 0;
       }
     }
+  }
 
+  // ── Luce segue anche durante autoplay ────────────────────────────────────
+  if (controls.isLocked && autoplayActive) {
+    const px = controls.getObject().position.x;
+    const pz = controls.getObject().position.z;
+    dirLight.position.set(px - 50, 80, pz - 50);
+    dirLight.target.position.set(px, 0, pz);
+    dirLight.target.updateMatrixWorld();
+  }
+
+  // ── Piani di testo inciso — attivi sempre (manuale e autoplay) ────────────
+  if (controls.isLocked && !dropping) {
     items.forEach(item => {
       const dist = camera.position.distanceTo(item.basePos);
 
@@ -732,8 +1055,6 @@ function animate() {
           });
         }
 
-        // Brillantezza: si accende gradualmente sotto i 7 unità
-        // da 0 (lontano) a 1.2 (vicinissimo, quasi luminoso)
         const glow = dist < 7
           ? Math.pow(1 - dist / 7, 1.5) * 1.2
           : 0.0;
@@ -744,7 +1065,6 @@ function animate() {
         });
 
       } else if (item.planes.length > 0) {
-        // Rimuovi e smaltisci quando il giocatore si allontana
         item.planes.forEach(p => {
           scene.remove(p);
           p.material.map.dispose();
