@@ -11,6 +11,13 @@ const speed = 2.5;
 const clock = new THREE.Clock();
 let velocity = new THREE.Vector3();
 
+// ─────────────────────────────────────────────────────────────
+// MOLTIPLICATORE VELOCITÀ (test: 10.0 — produzione: 1.0)
+// Scala: movimento manuale, autoplay walk, animazioni turn/snap/pitch,
+//        eye adaptation, idle delay, caduta iniziale.
+// ─────────────────────────────────────────────────────────────
+const DEV_SPEED_MULT = 11.0;
+
 // Dati caricati
 let TOTAL_COUNT = 0;
 let instancedMesh;
@@ -98,8 +105,30 @@ let apSnapTarget     = 0;
 let apReadPhase   = '';
 let apReadYawBack = 0;
 
-// ── Pitch quaternion-safe ─────────────────────────────────────
+// ── Rotazione quaternion-safe con ordine YXZ ──────────────────
+// ─────────────────────────────────────────────────────────────
+// ROOT CAUSE del glitch "ubriaco":
+//   Three.js usa 'XYZ' come ordine Euler di default. Noi invece
+//   leggiamo/scriviamo il quaternion della camera con ordine 'YXZ'
+//   (in getCameraPitch/setCameraPitch e internamente in PointerLockControls).
+//   In Three.js moderno controls.getObject() restituisce direttamente
+//   la camera (non un oggetto yaw separato). Quando scriviamo
+//   `camera.rotation.y = val` con ordine 'XYZ', Three.js ricalcola
+//   il quaternion da Euler(rotation.x, val, rotation.z, 'XYZ') —
+//   ma rotation.x contiene il pitch codificato in 'XYZ', non in 'YXZ'.
+//   Ogni frame la rotazione si corrompe leggermente; l'effetto
+//   si accumula → vista "ubriaca" dopo qualche minuto.
+//
+//   FIX: impostare camera.rotation.order = 'YXZ' UNA VOLTA sola
+//   in setupScene(). Tutte le operazioni rotation.y/x/.z sono
+//   coerenti con i quaternion 'YXZ' e con PointerLockControls.
+// ─────────────────────────────────────────────────────────────
 const _pitchEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+
+function getCameraYaw() {
+  _pitchEuler.setFromQuaternion(camera.quaternion, 'YXZ');
+  return _pitchEuler.y;
+}
 
 function getCameraPitch() {
   _pitchEuler.setFromQuaternion(camera.quaternion, 'YXZ');
@@ -119,6 +148,23 @@ function nearestCorridorCenter(pos, dirIdx) {
   const normalized = v + apGridHalfSize;
   const cell = Math.round(normalized / SPACING - 0.5);
   return (cell + 0.5) * SPACING - apGridHalfSize;
+}
+
+// Snap alla riga di pilastri più vicina lungo l'asse di cammino.
+// Usato prima di entrare in lettura per centrare la camera
+// esattamente di fronte a un pilastro, eliminando l'overshoot
+// del passo discreto (specialmente con DEV_SPEED_MULT > 1).
+function snapToPillarRow(camObj, dirIdx) {
+  const dir = AP_DIRS[dirIdx];
+  if (dir.z !== 0) {
+    // cammino in Z → snap della Z alla riga pilastri
+    const raw = camObj.position.z + apGridHalfSize;
+    camObj.position.z = Math.round(raw / SPACING) * SPACING - apGridHalfSize;
+  } else {
+    // cammino in X → snap della X alla colonna pilastri
+    const raw = camObj.position.x + apGridHalfSize;
+    camObj.position.x = Math.round(raw / SPACING) * SPACING - apGridHalfSize;
+  }
 }
 
 const AP_DIRS = [
@@ -161,7 +207,7 @@ function apPickDir(emergencyCheckDist = SPACING * 0.8) {
   }
 
   apDirIdx    = chosen;
-  apYawStart  = controls.getObject().rotation.y;
+  apYawStart  = getCameraYaw();
   apYawTarget = apYawStart + shortestYaw(apYawStart, dirToYaw(AP_DIRS[apDirIdx]));
 }
 
@@ -204,9 +250,17 @@ function startAutoplay() {
   autoplayActive = true;
   apTimer = 0;
 
-  camera.rotation.z = 0;
+  // Disconnette PointerLockControls per evitare che micro-movimenti
+  // del mouse sovrascrivano la rotazione scritta dall'autoplay ogni frame.
+  // ESC/pausa gestiti dal listener nativo 'pointerlockchange' (vedi setupControls).
+  if (controls) controls.disconnect();
 
-  const curYaw = controls.getObject().rotation.y;
+  // Azzera il roll residuo (solo precauzione)
+  _pitchEuler.setFromQuaternion(camera.quaternion, 'YXZ');
+  _pitchEuler.z = 0;
+  camera.quaternion.setFromEuler(_pitchEuler);
+
+  const curYaw = getCameraYaw();
   const camPos = controls.getObject().position;
 
   let best = 0, bestDist = Infinity;
@@ -234,6 +288,10 @@ function startAutoplay() {
 function stopAutoplay() {
   autoplayActive = false;
   move.forward = move.back = move.left = move.right = false;
+
+  // Riconnette: il mouse torna a controllare la camera.
+  if (controls) controls.connect();
+
   if (footstepAudio && !footstepAudio.paused) {
     footstepAudio.pause();
     footstepAudio.currentTime = 0;
@@ -245,16 +303,17 @@ function updateAutoplay(delta) {
 
   const camObj = controls.getObject();
 
-  _pitchEuler.setFromQuaternion(camObj.quaternion, 'YXZ');
+  // Azzera il roll ogni frame (non deve mai accumularsi)
+  _pitchEuler.setFromQuaternion(camera.quaternion, 'YXZ');
   if (Math.abs(_pitchEuler.z) > 0.0001) {
     _pitchEuler.z = 0;
-    camObj.quaternion.setFromEuler(_pitchEuler);
+    camera.quaternion.setFromEuler(_pitchEuler);
   }
 
   if (apSub !== 'reading') {
     const px = getCameraPitch();
     if (Math.abs(px) > 0.001) {
-      const t = 1.0 - Math.exp(-3.5 * delta);
+      const t = 1.0 - Math.exp(-3.5 * DEV_SPEED_MULT * delta);
       setCameraPitch(THREE.MathUtils.lerp(px, 0, t));
     } else {
       setCameraPitch(0);
@@ -262,10 +321,13 @@ function updateAutoplay(delta) {
   }
 
   apTimer += delta;
+  // apTimerScaled accelera tutte le fasi temporizzate con DEV_SPEED_MULT.
+  // 1.0 = normale, 10.0 = 10× più veloce. Le costanti di durata restano intatte.
+  const apTimerScaled = apTimer * DEV_SPEED_MULT;
 
   if (apSub === 'snapping') {
     const dir        = AP_DIRS[apDirIdx];
-    const SNAP_SPEED = 18.0;
+    const SNAP_SPEED = 18.0 * DEV_SPEED_MULT;
 
     if (dir.z !== 0) {
       const diff = apSnapTarget - camObj.position.x;
@@ -277,19 +339,20 @@ function updateAutoplay(delta) {
       else camObj.position.z += Math.sign(diff) * Math.min(Math.abs(diff), SNAP_SPEED * delta);
     }
 
-    let yawDiff = apYawTarget - camObj.rotation.y;
+    // Corregge lo yaw durante lo snap (usa camera.rotation.y che ora è YXZ-coerente)
+    let yawDiff = apYawTarget - getCameraYaw();
     yawDiff = ((yawDiff + Math.PI) % (Math.PI * 2)) - Math.PI;
     if (Math.abs(yawDiff) < 0.001) {
-      camObj.rotation.y = apYawTarget;
+      camera.rotation.y = apYawTarget;
     } else {
-      camObj.rotation.y += yawDiff * Math.min(1, 8 * delta);
+      camera.rotation.y += yawDiff * Math.min(1, 8 * DEV_SPEED_MULT * delta);
     }
     return;
   }
 
   if (apSub === 'walking') {
-    const dir    = AP_DIRS[apDirIdx];
-    const step   = AUTOPLAY_WALK_SPEED * delta;
+    const dir  = AP_DIRS[apDirIdx];
+    const step = AUTOPLAY_WALK_SPEED * DEV_SPEED_MULT * delta;
     const newPos = camObj.position.clone().addScaledVector(dir, step);
     const sphere = new THREE.Sphere(newPos, CAMERA_RADIUS);
 
@@ -312,12 +375,12 @@ function updateAutoplay(delta) {
       const th = getTerrainHeight(newPos.x, newPos.z);
       camObj.position.y += ((th + GROUND_HEIGHT_OFFSET) - camObj.position.y) * 0.25;
 
-      let yawDiff = apYawTarget - camObj.rotation.y;
+      let yawDiff = apYawTarget - getCameraYaw();
       yawDiff = ((yawDiff + Math.PI) % (Math.PI * 2)) - Math.PI;
       if (Math.abs(yawDiff) < 0.001) {
-        camObj.rotation.y = apYawTarget;
+        camera.rotation.y = apYawTarget;
       } else {
-        camObj.rotation.y += yawDiff * Math.min(1, 8 * delta);
+        camera.rotation.y += yawDiff * Math.min(1, 8 * DEV_SPEED_MULT * delta);
       }
 
       apWalkedDist   += step;
@@ -329,11 +392,16 @@ function updateAutoplay(delta) {
         apReadWalkDist   = 0;
         apReadWalkTarget = (3 + Math.floor(Math.random() * 3)) * SPACING;
 
+        // ── Centering fix: snap alla riga/colonna di pilastri esatta
+        //    prima di girare a guardarlo. Elimina l'overshoot del passo
+        //    discreto (più evidente con DEV_SPEED_MULT > 1).
+        snapToPillarRow(camObj, apDirIdx);
+
         const sideOffset = Math.random() < 0.5 ? 1 : 3;
         const sideDirIdx = (apDirIdx + sideOffset) % 4;
 
         apReadYawBack = dirToYaw(AP_DIRS[apDirIdx]);
-        apYawStart    = camObj.rotation.y;
+        apYawStart    = getCameraYaw();
         apYawTarget   = apYawStart + shortestYaw(apYawStart, dirToYaw(AP_DIRS[sideDirIdx]));
 
         apSub       = 'reading';
@@ -368,43 +436,42 @@ function updateAutoplay(delta) {
   } else if (apSub === 'reading') {
 
     if (apReadPhase === 'turn_to') {
-      const t    = Math.min(1, apTimer / READING_TURN_SECS);
+      const t    = Math.min(1, apTimerScaled / READING_TURN_SECS);
       const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
       let diff   = apYawTarget - apYawStart;
       diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
-      camObj.rotation.y = apYawStart + diff * ease;
-      if (t >= 1) { camObj.rotation.y = apYawStart + diff; apReadPhase = 'tilt_up'; apTimer = 0; }
+      camera.rotation.y = apYawStart + diff * ease;
+      if (t >= 1) { camera.rotation.y = apYawStart + diff; apReadPhase = 'tilt_up'; apTimer = 0; }
 
     } else if (apReadPhase === 'tilt_up') {
       const cur  = getCameraPitch();
       const diff = READING_PITCH - cur;
-      setCameraPitch(cur + diff * Math.min(1, READING_PITCH_LERP * delta));
+      setCameraPitch(cur + diff * Math.min(1, READING_PITCH_LERP * DEV_SPEED_MULT * delta));
       if (Math.abs(diff) < 0.005) { setCameraPitch(READING_PITCH); apReadPhase = 'pause'; apTimer = 0; }
 
     } else if (apReadPhase === 'pause') {
-      if (apTimer >= READING_PAUSE_SECS) { apReadPhase = 'tilt_down'; apTimer = 0; }
+      if (apTimerScaled >= READING_PAUSE_SECS) { apReadPhase = 'tilt_down'; apTimer = 0; }
 
     } else if (apReadPhase === 'tilt_down') {
       const cur = getCameraPitch();
-      setCameraPitch(cur + (0 - cur) * Math.min(1, READING_PITCH_LERP * delta));
+      setCameraPitch(cur + (0 - cur) * Math.min(1, READING_PITCH_LERP * DEV_SPEED_MULT * delta));
       if (Math.abs(cur) < 0.005) {
         setCameraPitch(0);
-        apYawStart  = camObj.rotation.y;
+        apYawStart  = getCameraYaw();
         apYawTarget = apYawStart + shortestYaw(apYawStart, apReadYawBack);
         apReadPhase = 'turn_back';
         apTimer     = 0;
       }
 
     } else if (apReadPhase === 'turn_back') {
-      const t    = Math.min(1, apTimer / READING_TURN_SECS);
+      const t    = Math.min(1, apTimerScaled / READING_TURN_SECS);
       const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
       let diff   = apYawTarget - apYawStart;
       diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
-      camObj.rotation.y = apYawStart + diff * ease;
+      camera.rotation.y = apYawStart + diff * ease;
       if (t >= 1) {
-        camObj.rotation.y = apYawStart + diff;
-        apYawStart  = camObj.rotation.y;
-        normalizeYaw(camObj);
+        camera.rotation.y = apYawStart + diff;
+        normalizeYaw();
         apYawTarget = apReadYawBack;
         apWalkDist  = distToNextIntersection(camObj.position, apDirIdx);
         apSub       = 'walking';
@@ -418,17 +485,16 @@ function updateAutoplay(delta) {
     apWalkedDist = 0;
 
   } else if (apSub === 'turning') {
-    const t    = Math.min(1, apTimer / AUTOPLAY_TURN_SECONDS);
+    const t    = Math.min(1, apTimerScaled / AUTOPLAY_TURN_SECONDS);
     const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
 
     let diff = apYawTarget - apYawStart;
     diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
-    camObj.rotation.y = apYawStart + diff * ease;
+    camera.rotation.y = apYawStart + diff * ease;
 
     if (t >= 1) {
-      camObj.rotation.y = apYawStart + diff;
-      normalizeYaw(camObj);
-      apYawStart      = camObj.rotation.y;
+      camera.rotation.y = apYawStart + diff;
+      normalizeYaw();
       apSnapTarget    = nearestCorridorCenter(camObj.position, apDirIdx);
       apSub           = 'snapping';
       apTimer         = 0;
@@ -563,7 +629,6 @@ function createTerrain(width, depth, segments) {
   }
   geometry.computeVertexNormals();
 
-  // Materiale nero semplice senza texture
   const material = new THREE.MeshStandardMaterial({
     color: 0x000000,
     roughness: 0.7,
@@ -575,9 +640,9 @@ function createTerrain(width, depth, segments) {
   const terrain = new THREE.Mesh(geometry, material);
   terrain.receiveShadow = true;
   terrain.castShadow = true;
-  
+
   console.log('Terreno creato con materiale nero');
-  
+
   return terrain;
 }
 
@@ -591,6 +656,14 @@ function setupScene() {
 
   camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 5000);
   camera.position.set(SPACING / 2, START_HEIGHT, SPACING / 2);
+
+  // ── FIX PRINCIPALE: impostare l'ordine Euler della camera a 'YXZ'.
+  //    Three.js usa 'XYZ' di default. PointerLockControls usa 'YXZ'
+  //    internamente. Il nostro codice (getCameraPitch/setCameraPitch,
+  //    getCameraYaw) usa 'YXZ'. Con ordini diversi, ogni assegnazione
+  //    diretta a camera.rotation.y ricreava il quaternion con il pitch
+  //    sbagliato → accumulo di errori rotativi → effetto ubriaco.
+  camera.rotation.order = 'YXZ';
 
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -795,13 +868,15 @@ function shortestYaw(from, to) {
   return d;
 }
 
-function normalizeYaw(camObj) {
+// normalizeYaw ora opera direttamente su camera.rotation.y (YXZ-coerente)
+// e aggiorna i riferimenti apYawStart/apYawTarget di conseguenza.
+function normalizeYaw() {
   const PI2 = Math.PI * 2;
-  let y = camObj.rotation.y;
+  let y = camera.rotation.y;
   if (y > Math.PI || y < -Math.PI) {
     const shift = Math.round(y / PI2) * PI2;
     y -= shift;
-    camObj.rotation.y = y;
+    camera.rotation.y = y;
     apYawStart  -= shift;
     apYawTarget -= shift;
   }
@@ -828,18 +903,24 @@ function setupControls() {
       if (bgAudio) { bgAudio.muted = false; bgAudio.play(); }
     });
 
-    controls.addEventListener('unlock', () => {
-      if (gameState === 'playing') {
-        gameState = 'paused';
-        pauseScreen.classList.remove('hidden');
-        if (bgAudio) bgAudio.pause();
-        if (footstepAudio && !footstepAudio.paused) {
-          footstepAudio.pause();
-          footstepAudio.currentTime = 0;
-        }
-        move.forward = move.back = move.left = move.right = false;
-        if (autoplayActive) stopAutoplay();
+    // ── FIX ESC/pausa ────────────────────────────────────────────────
+    // controls.addEventListener('unlock') non scatta quando i controlli
+    // sono in disconnect() (durante l'autoplay).
+    // Il listener nativo su document funziona sempre.
+    document.addEventListener('pointerlockchange', () => {
+      if (document.pointerLockElement) return; // lock acquisito, non rilasciato
+      if (gameState !== 'playing') return;
+
+      if (autoplayActive) stopAutoplay();
+
+      gameState = 'paused';
+      pauseScreen.classList.remove('hidden');
+      if (bgAudio) bgAudio.pause();
+      if (footstepAudio && !footstepAudio.paused) {
+        footstepAudio.pause();
+        footstepAudio.currentTime = 0;
       }
+      move.forward = move.back = move.left = move.right = false;
     });
 
     document.getElementById("start").addEventListener('click', () => {
@@ -908,7 +989,8 @@ function updateEyeAdaptation(currentTime) {
   if (!gameStartTime) return;
 
   const elapsed = currentTime - gameStartTime;
-  let factor = Math.min(1, elapsed / 20);
+  // DEV_SPEED_MULT accelera l'adattamento (20s → 2s a 10×)
+  let factor = Math.min(1, elapsed * DEV_SPEED_MULT / 20);
   factor = Math.pow(factor, 1.2);
 
   hemisphereLight.intensity = INITIAL_HEMISPHERE  + (TARGET_HEMISPHERE  - INITIAL_HEMISPHERE)  * factor;
@@ -982,6 +1064,8 @@ function createEngravingPlanes(item) {
   const cy = item.terrainY + ph / 2;
   const offset = 0.02;
   const tex = createEngravedTexture(item.en_name, item.ar_name, item.age);
+
+  // Geometry condivisa tra le 4 facce — disposta una sola volta in disposeEngravingPlanes
   const geo = new THREE.PlaneGeometry(hw * 2, ph);
 
   const faces = [
@@ -1007,6 +1091,24 @@ function createEngravingPlanes(item) {
   });
 }
 
+function disposeEngravingPlanes(item) {
+  if (item.planes.length === 0) return;
+
+  // Geometry e texture sono condivise tra le 4 planes: dispose UNA sola volta
+  const sharedGeo = item.planes[0].geometry;
+  const sharedTex = item.planes[0].material.map;
+
+  item.planes.forEach(p => {
+    scene.remove(p);
+    p.material.dispose();
+  });
+
+  sharedGeo.dispose();
+  if (sharedTex) sharedTex.dispose();
+
+  item.planes = [];
+}
+
 function isGameActive() {
   return isMobile ? gameState === 'playing' : controls.isLocked;
 }
@@ -1020,7 +1122,8 @@ function animate() {
     updateEyeAdaptation(currentTime);
 
     if (!isMobile && lastUserInputTime !== null && !autoplayActive && controls.isLocked && !dropping) {
-      if ((currentTime - lastUserInputTime) >= AUTOPLAY_IDLE_DELAY) {
+      // DEV_SPEED_MULT accorcia l'attesa prima dell'autoplay idle
+      if ((currentTime - lastUserInputTime) * DEV_SPEED_MULT >= AUTOPLAY_IDLE_DELAY) {
         startAutoplay();
       }
     }
@@ -1031,7 +1134,7 @@ function animate() {
   }
 
   if (dropping) {
-    camera.position.y = Math.max(camera.position.y - 30 * delta, GROUND_HEIGHT_OFFSET + 0.5);
+    camera.position.y = Math.max(camera.position.y - 30 * DEV_SPEED_MULT * delta, GROUND_HEIGHT_OFFSET + 0.5);
     if (camera.position.y <= GROUND_HEIGHT_OFFSET + 0.6) dropping = false;
   }
 
@@ -1039,9 +1142,9 @@ function animate() {
     const currentPos = controls.getObject().position.clone();
 
     velocity.set(
-      (move.right - move.left)    * speed * delta,
+      (move.right - move.left)    * speed * DEV_SPEED_MULT * delta,
       0,
-      (move.back  - move.forward) * speed * delta
+      (move.back  - move.forward) * speed * DEV_SPEED_MULT * delta
     );
 
     const direction = new THREE.Vector3();
@@ -1110,13 +1213,7 @@ function animate() {
         });
 
       } else if (item.planes.length > 0) {
-        item.planes.forEach(p => {
-          scene.remove(p);
-          p.material.map.dispose();
-          p.material.dispose();
-          p.geometry.dispose();
-        });
-        item.planes = [];
+        disposeEngravingPlanes(item);
       }
     });
   }
