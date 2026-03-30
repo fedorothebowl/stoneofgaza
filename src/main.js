@@ -228,7 +228,7 @@ function startAutoplay() {
   apReadWalkDist   = 0;
   apReadWalkTarget = distToNextPillar(controls.getObject().position, apDirIdx);
   apIntersCount    = 0;
-  apIntersTarget   = 5 + Math.floor(Math.random() * 6); // 5–10 incroci
+  apIntersTarget   = 5 + Math.floor(Math.random() * 6);
 }
 
 function stopAutoplay() {
@@ -245,17 +245,12 @@ function updateAutoplay(delta) {
 
   const camObj = controls.getObject();
 
-  // ── Azzera il roll (z) via quaternione — preserva yaw (y) e pitch (x) intatti.
-  // camObj === camera in PointerLockControls moderno: scrivere rotation.z direttamente
-  // o usare rotation.set() tocca anche gli altri assi per effetto gimbal.
-  // La via sicura è la stessa usata da setCameraPitch: Euler YXZ → zero z → quaternione.
   _pitchEuler.setFromQuaternion(camObj.quaternion, 'YXZ');
   if (Math.abs(_pitchEuler.z) > 0.0001) {
     _pitchEuler.z = 0;
     camObj.quaternion.setFromEuler(_pitchEuler);
   }
 
-  // ── Reset pitch camera con decadimento esponenziale — smooth a qualsiasi framerate
   if (apSub !== 'reading') {
     const px = getCameraPitch();
     if (Math.abs(px) > 0.001) {
@@ -268,7 +263,6 @@ function updateAutoplay(delta) {
 
   apTimer += delta;
 
-  // ── Snapping ──────────────────────────────────────────────────────────────
   if (apSub === 'snapping') {
     const dir        = AP_DIRS[apDirIdx];
     const SNAP_SPEED = 18.0;
@@ -293,7 +287,6 @@ function updateAutoplay(delta) {
     return;
   }
 
-  // ── Walking ───────────────────────────────────────────────────────────────
   if (apSub === 'walking') {
     const dir    = AP_DIRS[apDirIdx];
     const step   = AUTOPLAY_WALK_SPEED * delta;
@@ -332,10 +325,9 @@ function updateAutoplay(delta) {
 
       if (footstepAudio && footstepAudio.paused) footstepAudio.play();
 
-      // ── Stop lettura: ogni 3–5 pilastri ───────────────────────────────────
       if (apReadWalkDist >= apReadWalkTarget) {
         apReadWalkDist   = 0;
-        apReadWalkTarget = (3 + Math.floor(Math.random() * 3)) * SPACING; // 3–5
+        apReadWalkTarget = (3 + Math.floor(Math.random() * 3)) * SPACING;
 
         const sideOffset = Math.random() < 0.5 ? 1 : 3;
         const sideDirIdx = (apDirIdx + sideOffset) % 4;
@@ -354,7 +346,6 @@ function updateAutoplay(delta) {
         return;
       }
 
-      // ── Svolta all'incrocio ───────────────────────────────────────────────
       if (apWalkedDist >= apWalkDist) {
         apIntersCount++;
         apWalkedDist = 0;
@@ -364,7 +355,7 @@ function updateAutoplay(delta) {
           apSub          = 'turning';
           apTimer        = 0;
           apIntersCount  = 0;
-          apIntersTarget = 5 + Math.floor(Math.random() * 6); // 5–10
+          apIntersTarget = 5 + Math.floor(Math.random() * 6);
         } else {
           apWalkDist = distToNextIntersection(camObj.position, apDirIdx);
         }
@@ -374,7 +365,6 @@ function updateAutoplay(delta) {
       }
     }
 
-  // ── Reading ───────────────────────────────────────────────────────────────
   } else if (apSub === 'reading') {
 
     if (apReadPhase === 'turn_to') {
@@ -422,13 +412,11 @@ function updateAutoplay(delta) {
       }
     }
 
-  // ── Pausing (fallback) ────────────────────────────────────────────────────
   } else if (apSub === 'pausing') {
     apSub        = 'walking';
     apWalkDist   = distToNextIntersection(controls.getObject().position, apDirIdx);
     apWalkedDist = 0;
 
-  // ── Turning ───────────────────────────────────────────────────────────────
   } else if (apSub === 'turning') {
     const t    = Math.min(1, apTimer / AUTOPLAY_TURN_SECONDS);
     const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
@@ -449,8 +437,6 @@ function updateAutoplay(delta) {
     }
   }
 }
-
-// ─────────────────────────────────────────────────────────────
 
 init();
 
@@ -577,19 +563,21 @@ function createTerrain(width, depth, segments) {
   }
   geometry.computeVertexNormals();
 
-  const groundCanvas = createGroundTexture(1024);
-  const groundTexture = new THREE.CanvasTexture(groundCanvas);
-  groundTexture.wrapS = THREE.RepeatWrapping;
-  groundTexture.wrapT = THREE.RepeatWrapping;
-  groundTexture.repeat.set(12, 12);
-
+  // Materiale nero semplice senza texture
   const material = new THREE.MeshStandardMaterial({
-    map: groundTexture, roughness: 0.85, metalness: 0.05, color: 0x7a6a5a
+    color: 0x000000,
+    roughness: 0.7,
+    metalness: 0.1,
+    emissive: 0x000000,
+    side: THREE.DoubleSide
   });
 
   const terrain = new THREE.Mesh(geometry, material);
   terrain.receiveShadow = true;
   terrain.castShadow = true;
+  
+  console.log('Terreno creato con materiale nero');
+  
   return terrain;
 }
 
@@ -664,40 +652,6 @@ function setupScene() {
   scene.add(new THREE.Points(grassGeometry, grassMaterial));
 }
 
-function createGroundTexture(size) {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext('2d');
-
-  ctx.fillStyle = 'rgb(85, 70, 60)';
-  ctx.fillRect(0, 0, size, size);
-
-  for (let i = 0; i < 1500; i++) {
-    const x = Math.random() * size, y = Math.random() * size;
-    const r = Math.random() * 15 + 3, val = 60 + Math.random() * 35;
-    ctx.fillStyle = `rgba(${val - 20}, ${val - 25}, ${val - 30}, 0.5)`;
-    ctx.beginPath();
-    ctx.ellipse(x, y, r, r * (0.5 + Math.random()), Math.random() * Math.PI, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  for (let i = 0; i < 4000; i++) {
-    const x = Math.random() * size, y = Math.random() * size, v = 50 + Math.random() * 40;
-    ctx.fillStyle = `rgba(${v}, ${v - 10}, ${v - 15}, 0.6)`;
-    ctx.fillRect(x, y, 1 + Math.random() * 2, 1 + Math.random() * 2);
-  }
-
-  const imageData = ctx.getImageData(0, 0, size, size);
-  const px = imageData.data;
-  for (let i = 0; i < px.length; i += 4) {
-    const n = (Math.random() - 0.5) * 18;
-    px[i]     = Math.max(45, Math.min(105, px[i]     + n));
-    px[i + 1] = Math.max(40, Math.min(95,  px[i + 1] + n * 0.9));
-    px[i + 2] = Math.max(35, Math.min(85,  px[i + 2] + n * 0.8));
-  }
-  ctx.putImageData(imageData, 0, 0);
-  return canvas;
-}
-
 function setupFootstepAudio() {
   footstepAudio = new Audio('public/freesound_community-footsteps-dirt-gravel-6823.mp3');
   footstepAudio.loop = true;
@@ -764,11 +718,6 @@ function addInstancedBlocks(data) {
   instancedMesh.instanceMatrix.needsUpdate = true;
 }
 
-// ─────────────────────────────────────────────────────────────
-// RECINZIONE PERIMETRALE
-// Stessa geometria e materiale dei pilastri interni.
-// ~4 × gridSize ≈ ~900 istanze su 50k+: peso trascurabile.
-// ─────────────────────────────────────────────────────────────
 function createBorderPillars() {
   const pilastroWidth  = 2.3;
   const pilastroHeight = 4.6;
@@ -780,12 +729,10 @@ function createBorderPillars() {
 
   const borderPos = [];
 
-  // Lati nord (z = maxC) e sud (z = minC)
   for (let x = minC; x <= maxC + 0.01; x += SPACING) {
     borderPos.push({ x: snap(x), z: minC });
     borderPos.push({ x: snap(x), z: maxC });
   }
-  // Lati est (x = maxC) e ovest (x = minC) — angoli già inclusi sopra
   for (let z = minC + SPACING; z < maxC - 0.01; z += SPACING) {
     borderPos.push({ x: minC, z: snap(z) });
     borderPos.push({ x: maxC, z: snap(z) });
@@ -811,25 +758,24 @@ function createBorderPillars() {
 
   borderMesh.instanceMatrix.needsUpdate = true;
 
-  // ── Muri invisibili continui — cintura di sicurezza assoluta ─────────────
   const wallH = 20;
   const wallD = 1.0;
   const edge  = maxC + hw;
 
   [
-    new THREE.Box3( // Nord
+    new THREE.Box3(
       new THREE.Vector3(-edge - wallD, -5,  edge),
       new THREE.Vector3( edge + wallD, wallH, edge + wallD)
     ),
-    new THREE.Box3( // Sud
+    new THREE.Box3(
       new THREE.Vector3(-edge - wallD, -5, -edge - wallD),
       new THREE.Vector3( edge + wallD, wallH, -edge)
     ),
-    new THREE.Box3( // Est
+    new THREE.Box3(
       new THREE.Vector3( edge,         -5, -edge - wallD),
       new THREE.Vector3( edge + wallD, wallH,  edge + wallD)
     ),
-    new THREE.Box3( // Ovest
+    new THREE.Box3(
       new THREE.Vector3(-edge - wallD, -5, -edge - wallD),
       new THREE.Vector3(-edge,         wallH,  edge + wallD)
     ),
@@ -838,13 +784,10 @@ function createBorderPillars() {
   console.log(`Recinzione: ${borderPos.length} pilastri al perimetro.`);
 }
 
-// Allinea al multiplo di SPACING più vicino
 function snap(v) {
   return Math.round(v / SPACING) * SPACING;
 }
 
-// Differenza angolare più breve tra due yaw, in [-π, π].
-// Usa doppio modulo per evitare il segno negativo di % in JS.
 function shortestYaw(from, to) {
   let d = (to - from) % (Math.PI * 2);
   if (d >  Math.PI) d -= Math.PI * 2;
@@ -852,9 +795,6 @@ function shortestYaw(from, to) {
   return d;
 }
 
-// Riporta camObj.rotation.y in [-π, π] e aggiusta i target di animazione
-// di conseguenza, così le animazioni in corso non saltano.
-// Va chiamato quando una svolta è completata (rotation.y è fermo sul target).
 function normalizeYaw(camObj) {
   const PI2 = Math.PI * 2;
   let y = camObj.rotation.y;
@@ -866,8 +806,6 @@ function normalizeYaw(camObj) {
     apYawTarget -= shift;
   }
 }
-
-// ─────────────────────────────────────────────────────────────
 
 function setupControls() {
   controls = new PointerLockControls(camera, renderer.domElement);
@@ -1092,13 +1030,11 @@ function animate() {
     updateAutoplay(delta);
   }
 
-  // Caduta iniziale
   if (dropping) {
     camera.position.y = Math.max(camera.position.y - 30 * delta, GROUND_HEIGHT_OFFSET + 0.5);
     if (camera.position.y <= GROUND_HEIGHT_OFFSET + 0.6) dropping = false;
   }
 
-  // Movimento manuale
   if (!isMobile && controls.isLocked && !dropping && !autoplayActive) {
     const currentPos = controls.getObject().position.clone();
 
@@ -1145,7 +1081,6 @@ function animate() {
     }
   }
 
-  // Luce durante autoplay
   if (isGameActive() && autoplayActive) {
     const px = controls.getObject().position.x;
     const pz = controls.getObject().position.z;
@@ -1154,7 +1089,6 @@ function animate() {
     dirLight.target.updateMatrixWorld();
   }
 
-  // Piani di testo inciso
   if (isGameActive() && !dropping) {
     items.forEach(item => {
       const dist = camera.position.distanceTo(item.basePos);
