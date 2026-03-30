@@ -72,7 +72,7 @@ const TARGET_AMBIENT      = 0.90 * 3;
 const TARGET_FILL         = 0.70 * 3;
 const TARGET_BACK         = 0.50 * 3;
 const TARGET_SKY          = 1.30 * 3;
-const TARGET_FOG_DENSITY  = 0.2;
+const TARGET_FOG_DENSITY  = 0.1;
 
 // ─────────────────────────────────────────────────────────────
 // AUTOPLAY
