@@ -16,7 +16,7 @@ let velocity = new THREE.Vector3();
 // Scala: movimento manuale, autoplay walk, animazioni turn/snap/pitch,
 //        eye adaptation, idle delay, caduta iniziale.
 // ─────────────────────────────────────────────────────────────
-const DEV_SPEED_MULT = 11.0;
+const DEV_SPEED_MULT = 1.0;
 
 // Dati caricati
 let TOTAL_COUNT = 0;
@@ -58,21 +58,21 @@ let sharedPillarMaterial = null;
 // ─────────────────────────────────────────────────────────────
 // VALORI LUCI
 // ─────────────────────────────────────────────────────────────
-const INITIAL_HEMISPHERE  = 0.90 * 0.5;
-const INITIAL_DIRECTIONAL = 2.4  * 0.5;
-const INITIAL_AMBIENT     = 0.90 * 0.5;
-const INITIAL_FILL        = 0.70 * 0.5;
-const INITIAL_BACK        = 0.50 * 0.5;
-const INITIAL_SKY         = 1.30 * 0.5;
-const INITIAL_FOG_DENSITY = 0;
+const INITIAL_HEMISPHERE  = 0.90 * 2;
+const INITIAL_DIRECTIONAL = 2.4  * 2;
+const INITIAL_AMBIENT     = 0.90 * 2;
+const INITIAL_FILL        = 0.70 * 2;
+const INITIAL_BACK        = 0.50 * 2;
+const INITIAL_SKY         = 1.30 * 2;
+const INITIAL_FOG_DENSITY = 0.01;
 
-const TARGET_HEMISPHERE   = 0.90 * 1.5;
-const TARGET_DIRECTIONAL  = 2.4  * 1.5;
-const TARGET_AMBIENT      = 0.90 * 1.5;
-const TARGET_FILL         = 0.70 * 1.5;
-const TARGET_BACK         = 0.50 * 1.5;
-const TARGET_SKY          = 1.30 * 1.5;
-const TARGET_FOG_DENSITY  = 0.1;
+const TARGET_HEMISPHERE   = 0.90 * 3;
+const TARGET_DIRECTIONAL  = 2.4  * 3;
+const TARGET_AMBIENT      = 0.90 * 3;
+const TARGET_FILL         = 0.70 * 3;
+const TARGET_BACK         = 0.50 * 3;
+const TARGET_SKY          = 1.30 * 3;
+const TARGET_FOG_DENSITY  = 0.2;
 
 // ─────────────────────────────────────────────────────────────
 // AUTOPLAY
@@ -904,23 +904,29 @@ function setupControls() {
     });
 
     // ── FIX ESC/pausa ────────────────────────────────────────────────
-    // controls.addEventListener('unlock') non scatta quando i controlli
-    // sono in disconnect() (durante l'autoplay).
-    // Il listener nativo su document funziona sempre.
     document.addEventListener('pointerlockchange', () => {
       if (document.pointerLockElement) return; // lock acquisito, non rilasciato
       if (gameState !== 'playing') return;
 
       if (autoplayActive) stopAutoplay();
 
-      gameState = 'paused';
-      pauseScreen.classList.remove('hidden');
-      if (bgAudio) bgAudio.pause();
+      // Disabilita il movimento
+      move.forward = move.back = move.left = move.right = false;
+      
+      // Ferma l'audio dei passi
       if (footstepAudio && !footstepAudio.paused) {
         footstepAudio.pause();
         footstepAudio.currentTime = 0;
       }
-      move.forward = move.back = move.left = move.right = false;
+      
+      // Metti in pausa l'audio di sottofondo
+      if (bgAudio && !bgAudio.paused) {
+        bgAudio.pause();
+      }
+      
+      // Cambia stato
+      gameState = 'paused';
+      pauseScreen.classList.remove('hidden');
     });
 
     document.getElementById("start").addEventListener('click', () => {
@@ -931,14 +937,26 @@ function setupControls() {
     });
 
     document.getElementById("resume").addEventListener('click', () => {
-      if (gameState === 'paused') controls.lock();
+      if (gameState === 'paused') {
+        controls.lock();
+      }
     });
 
     window.addEventListener('keydown', (e) => {
+      // Blocca gli input del gioco se in pausa
+      if (gameState !== 'playing') {
+        // Previeni anche la gestione dei tasti di movimento
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(e.code)) {
+          e.preventDefault();
+        }
+        return;
+      }
+      
       if (gameState === 'playing') {
         lastUserInputTime = performance.now() / 1000;
         if (autoplayActive) stopAutoplay();
       }
+      
       switch (e.code) {
         case 'ArrowUp':    case 'KeyW': move.forward = true;  break;
         case 'ArrowDown':  case 'KeyS': move.back    = true;  break;
@@ -948,6 +966,9 @@ function setupControls() {
     });
 
     window.addEventListener('keyup', (e) => {
+      // Ignora gli input in pausa
+      if (gameState !== 'playing') return;
+      
       switch (e.code) {
         case 'ArrowUp':    case 'KeyW': move.forward = false; break;
         case 'ArrowDown':  case 'KeyS': move.back    = false; break;
@@ -957,7 +978,9 @@ function setupControls() {
     });
 
     document.addEventListener('mousemove', (e) => {
+      // Ignora i movimenti del mouse in pausa
       if (!controls.isLocked || gameState !== 'playing') return;
+      
       const moved = Math.abs(e.movementX) + Math.abs(e.movementY);
       if (moved < 6) return;
       lastUserInputTime = performance.now() / 1000;
