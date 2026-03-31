@@ -726,7 +726,7 @@ function setupScene() {
 }
 
 function setupFootstepAudio() {
-  footstepAudio = new Audio('public/freesound_community-footsteps-dirt-gravel-6823.mp3');
+  footstepAudio = new Audio('freesound_community-footsteps-dirt-gravel-6823.mp3');
   footstepAudio.loop = true;
   footstepAudio.volume = 0.5;
 }
