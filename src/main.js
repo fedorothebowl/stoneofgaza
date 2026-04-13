@@ -121,6 +121,10 @@ const READING_PAUSE_SECS = 1.5;
 let lastUserInputTime = null;
 let autoplayActive    = false;
 
+// Parallax intro: posizione normalizzata del mouse (-1 … 1)
+let introMouseNX = 0;
+let introMouseNY = 0;
+
 let apSub            = 'walking';
 let apTimer          = 0;
 let apWalkDist       = 0;
@@ -1003,8 +1007,14 @@ function setupControls() {
 
     document.addEventListener('mousemove', (e) => {
       // Ignora i movimenti del mouse in pausa
+      if (gameState === 'intro') {
+        introMouseNX = (e.clientX / window.innerWidth)  * 2 - 1;
+        introMouseNY = (e.clientY / window.innerHeight) * 2 - 1;
+        return;
+      }
+
       if (!controls.isLocked || gameState !== 'playing') return;
-      
+
       const moved = Math.abs(e.movementX) + Math.abs(e.movementY);
       if (moved < 6) return;
       lastUserInputTime = performance.now() / 1000;
@@ -1178,6 +1188,17 @@ function animate() {
 
   if (gameState === 'playing') {
     updateAutoplay(delta);
+  }
+
+  if (gameState === 'intro') {
+    const targetYaw   = -introMouseNX * (Math.PI / 8);   // ±22.5°
+    const targetPitch = -introMouseNY * (Math.PI / 16);  // ±11.25°
+    const t = 1 - Math.exp(-1.5 * delta);
+    _pitchEuler.setFromQuaternion(camera.quaternion, 'YXZ');
+    _pitchEuler.y = THREE.MathUtils.lerp(_pitchEuler.y, targetYaw, t);
+    _pitchEuler.x = THREE.MathUtils.lerp(_pitchEuler.x, targetPitch, t);
+    _pitchEuler.z = 0;
+    camera.quaternion.setFromEuler(_pitchEuler);
   }
 
   if (dropping) {
