@@ -16,7 +16,7 @@ let velocity = new THREE.Vector3();
 // Scala: movimento manuale, autoplay walk, animazioni turn/snap/pitch,
 //        eye adaptation, idle delay, caduta iniziale.
 // ─────────────────────────────────────────────────────────────
-const DEV_SPEED_MULT = 1.0;
+const DEV_SPEED_MULT = 1.44;
 
 // Dati caricati
 let TOTAL_COUNT = 0;
@@ -83,7 +83,7 @@ const COLOR_FLOOR_EMISSIVE = 0x000000;
 // ── Pilastri ──────────────────────────────────────────────────
 const COLOR_PILLAR           = 0xffffff;  // materiale con texture (MeshStandardMaterial)
 const COLOR_PILLAR_INSTANCED = 0x888888;  // materiale instanced mesh
-const PILLAR_HEIGHT          = 5.5;       // altezza dei pilastri
+const PILLAR_HEIGHT          = 5.2;       // altezza dei pilastri
 const PILLAR_SINK            = 0.4;       // quanto i pilastri affondano nel terreno (aumenta se sembrano sospesi)
 
 // ─────────────────────────────────────────────────────────────
@@ -108,18 +108,17 @@ const TARGET_FOG_DENSITY  = 0.1;
 // ─────────────────────────────────────────────────────────────
 // AUTOPLAY
 // ─────────────────────────────────────────────────────────────
-const AUTOPLAY_IDLE_DELAY   = 5;
 const AUTOPLAY_WALK_SPEED   = 1.44;
 const AUTOPLAY_TURN_SECONDS = 2.6;
 
 // ── Reading ───────────────────────────────────────────────────
-const READING_TURN_SECS  = 1.2;
-const READING_PITCH      = 0.28;
-const READING_PITCH_LERP = 0.9;
-const READING_PAUSE_SECS = 1.5;
+const READING_TURN_SECS      = 1.5; // durata rotazione verso/da il pilastro
+const READING_PITCH          = 0.28; // angolo di inclinazione testa (radianti)
+const READING_TILT_SECS      = 1.4; // durata ease-in-out tilt su/giù
+const READING_PAUSE_SECS     = 2; // pausa minima mentre si guarda il nome
+const READING_PAUSE_DOWN_SECS = 0; // pausa dopo che la testa è tornata giù
 
-let lastUserInputTime = null;
-let autoplayActive    = false;
+let autoplayActive = false;
 
 // Parallax intro: posizione normalizzata del mouse (-1 … 1)
 let introMouseNX = 0;
@@ -131,13 +130,13 @@ let apWalkDist       = 0;
 let apWalkedDist     = 0;
 let apReadWalkDist   = 0;
 let apReadWalkTarget = 0;
-let apPauseDur       = 0;
 let apDirIdx         = 0;
 let apIntersCount    = 0;
 let apIntersTarget   = 1;
 let apSnapTarget     = 0;
 
-let apReadPhase   = '';
+let apReadPhase      = '';
+let apTiltPitchStart = 0;
 let apReadYawBack = 0;
 
 // ── Rotazione quaternion-safe con ordine YXZ ──────────────────
@@ -173,6 +172,13 @@ function getCameraPitch() {
 function setCameraPitch(value) {
   _pitchEuler.setFromQuaternion(camera.quaternion, 'YXZ');
   _pitchEuler.x = value;
+  _pitchEuler.z = 0;
+  camera.quaternion.setFromEuler(_pitchEuler);
+}
+
+function setCameraYaw(value) {
+  _pitchEuler.setFromQuaternion(camera.quaternion, 'YXZ');
+  _pitchEuler.y = value;
   _pitchEuler.z = 0;
   camera.quaternion.setFromEuler(_pitchEuler);
 }
@@ -378,7 +384,7 @@ function updateAutoplay(delta) {
     let yawDiff = apYawTarget - getCameraYaw();
     yawDiff = ((yawDiff + Math.PI) % (Math.PI * 2)) - Math.PI;
     if (Math.abs(yawDiff) < 0.001) {
-      camera.rotation.y = apYawTarget;
+      setCameraYaw(apYawTarget);
     } else {
       camera.rotation.y += yawDiff * Math.min(1, 8 * DEV_SPEED_MULT * delta);
     }
@@ -413,9 +419,9 @@ function updateAutoplay(delta) {
       let yawDiff = apYawTarget - getCameraYaw();
       yawDiff = ((yawDiff + Math.PI) % (Math.PI * 2)) - Math.PI;
       if (Math.abs(yawDiff) < 0.001) {
-        camera.rotation.y = apYawTarget;
+        setCameraYaw(apYawTarget);
       } else {
-        camera.rotation.y += yawDiff * Math.min(1, 8 * DEV_SPEED_MULT * delta);
+        setCameraYaw(getCameraYaw() + yawDiff * Math.min(1, 8 * DEV_SPEED_MULT * delta));
       }
 
       apWalkedDist   += step;
@@ -475,23 +481,37 @@ function updateAutoplay(delta) {
       const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
       let diff   = apYawTarget - apYawStart;
       diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
-      camera.rotation.y = apYawStart + diff * ease;
-      if (t >= 1) { camera.rotation.y = apYawStart + diff; apReadPhase = 'tilt_up'; apTimer = 0; }
+      setCameraYaw(apYawStart + diff * ease);
+      if (t >= 1) {
+        setCameraYaw(apYawStart + diff);
+        apTiltPitchStart = getCameraPitch();
+        apReadPhase = 'tilt_up'; apTimer = 0;
+      }
 
     } else if (apReadPhase === 'tilt_up') {
-      const cur  = getCameraPitch();
-      const diff = READING_PITCH - cur;
-      setCameraPitch(cur + diff * Math.min(1, READING_PITCH_LERP * DEV_SPEED_MULT * delta));
-      if (Math.abs(diff) < 0.005) { setCameraPitch(READING_PITCH); apReadPhase = 'pause'; apTimer = 0; }
+      const t    = Math.min(1, apTimerScaled / (READING_TILT_SECS * DEV_SPEED_MULT));
+      const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+      setCameraPitch(apTiltPitchStart + (READING_PITCH - apTiltPitchStart) * ease);
+      if (t >= 1) { setCameraPitch(READING_PITCH); apReadPhase = 'pause'; apTimer = 0; }
 
     } else if (apReadPhase === 'pause') {
-      if (apTimerScaled >= READING_PAUSE_SECS) { apReadPhase = 'tilt_down'; apTimer = 0; }
+      if (apTimerScaled >= READING_PAUSE_SECS) {
+        apTiltPitchStart = getCameraPitch();
+        apReadPhase = 'tilt_down'; apTimer = 0;
+      }
 
     } else if (apReadPhase === 'tilt_down') {
-      const cur = getCameraPitch();
-      setCameraPitch(cur + (0 - cur) * Math.min(1, READING_PITCH_LERP * DEV_SPEED_MULT * delta));
-      if (Math.abs(cur) < 0.005) {
+      const t    = Math.min(1, apTimerScaled / (READING_TILT_SECS * DEV_SPEED_MULT));
+      const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+      setCameraPitch(apTiltPitchStart * (1 - ease));
+      if (t >= 1) {
         setCameraPitch(0);
+        apReadPhase = 'pause_down';
+        apTimer     = 0;
+      }
+
+    } else if (apReadPhase === 'pause_down') {
+      if (apTimerScaled >= READING_PAUSE_DOWN_SECS) {
         apYawStart  = getCameraYaw();
         apYawTarget = apYawStart + shortestYaw(apYawStart, apReadYawBack);
         apReadPhase = 'turn_back';
@@ -503,9 +523,9 @@ function updateAutoplay(delta) {
       const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
       let diff   = apYawTarget - apYawStart;
       diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
-      camera.rotation.y = apYawStart + diff * ease;
+      setCameraYaw(apYawStart + diff * ease);
       if (t >= 1) {
-        camera.rotation.y = apYawStart + diff;
+        setCameraYaw(apYawStart + diff);
         normalizeYaw();
         apYawTarget = apReadYawBack;
         apWalkDist  = distToNextIntersection(camObj.position, apDirIdx);
@@ -525,10 +545,10 @@ function updateAutoplay(delta) {
 
     let diff = apYawTarget - apYawStart;
     diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
-    camera.rotation.y = apYawStart + diff * ease;
+    setCameraYaw(apYawStart + diff * ease);
 
     if (t >= 1) {
-      camera.rotation.y = apYawStart + diff;
+      setCameraYaw(apYawStart + diff);
       normalizeYaw();
       apSnapTarget    = nearestCorridorCenter(camObj.position, apDirIdx);
       apSub           = 'snapping';
@@ -757,7 +777,7 @@ function startGameDirectly() {
   const instructions = document.getElementById('instructions');
   instructions.style.display = 'none';
   gameStartTime     = performance.now() / 1000;
-  lastUserInputTime = gameStartTime;
+
   gameState         = 'playing';
   dropping          = true;
 
@@ -894,11 +914,10 @@ function shortestYaw(from, to) {
 // e aggiorna i riferimenti apYawStart/apYawTarget di conseguenza.
 function normalizeYaw() {
   const PI2 = Math.PI * 2;
-  let y = camera.rotation.y;
+  const y = getCameraYaw();
   if (y > Math.PI || y < -Math.PI) {
     const shift = Math.round(y / PI2) * PI2;
-    y -= shift;
-    camera.rotation.y = y;
+    setCameraYaw(y - shift);
     apYawStart  -= shift;
     apYawTarget -= shift;
   }
@@ -916,12 +935,11 @@ function setupControls() {
       if (gameState === 'intro') {
         instructions.style.display = 'none';
         gameStartTime     = performance.now() / 1000;
-        lastUserInputTime = gameStartTime;
+      
         dropping          = true;
       }
       pauseScreen.classList.add('hidden');
       gameState = 'playing';
-      lastUserInputTime = performance.now() / 1000;
       if (bgAudio) { bgAudio.muted = false; bgAudio.play(); }
     });
 
@@ -981,7 +999,6 @@ function setupControls() {
       }
       
       if (gameState === 'playing') {
-        lastUserInputTime = performance.now() / 1000;
         if (autoplayActive) stopAutoplay();
       }
       
@@ -990,6 +1007,9 @@ function setupControls() {
         case 'ArrowDown':  case 'KeyS': move.back    = true;  break;
         case 'ArrowLeft':  case 'KeyA': move.left    = true;  break;
         case 'ArrowRight': case 'KeyD': move.right   = true;  break;
+        case 'KeyF':
+          if (autoplayActive) stopAutoplay(); else startAutoplay();
+          break;
       }
     });
 
@@ -1017,7 +1037,6 @@ function setupControls() {
 
       const moved = Math.abs(e.movementX) + Math.abs(e.movementY);
       if (moved < 6) return;
-      lastUserInputTime = performance.now() / 1000;
       if (autoplayActive) stopAutoplay();
     });
 
@@ -1101,7 +1120,7 @@ function createEngravedTexture(en_name, ar_name, age) {
   const enLines = wrapText(en_name || 'Unknown',   maxW, 30);
   const lineH   = 46;
   const blockH  = (arLines.length + enLines.length + 1) * lineH + 30;
-  let y = (H - blockH) / 2;
+  let y = (H - blockH) / 2 + 50;
 
   arLines.forEach(l => { carveText(l, cx, y, 34); y += lineH; });
   y += 18;
@@ -1178,12 +1197,6 @@ function animate() {
   if (gameState === 'playing' && gameStartTime) {
     updateEyeAdaptation(currentTime);
 
-    if (!isMobile && lastUserInputTime !== null && !autoplayActive && controls.isLocked && !dropping) {
-      // DEV_SPEED_MULT accorcia l'attesa prima dell'autoplay idle
-      if ((currentTime - lastUserInputTime) * DEV_SPEED_MULT >= AUTOPLAY_IDLE_DELAY) {
-        startAutoplay();
-      }
-    }
   }
 
   if (gameState === 'playing') {
@@ -1238,9 +1251,16 @@ function animate() {
 
     const px = controls.getObject().position.x;
     const pz = controls.getObject().position.z;
-    dirLight.position.set(px - 50, 80, pz - 50);
-    dirLight.target.position.set(px, 0, pz);
-    dirLight.target.updateMatrixWorld();
+    // Snap in light-space to eliminate shadow shimmer (shadow cam axes are 45° from world XZ)
+    // shadow_cam_x = (-0.7071, 0, 0.7071), shadow_cam_y·xz = (0.5299, 0, 0.5299)
+    { const _t = 160 / 2048;
+      const _u = Math.round(0.7071 * (pz - px) / _t) * _t;
+      const _v = Math.round(0.5299 * (px + pz) / _t) * _t;
+      const _sx = (1.8870 * _v - 1.4142 * _u) / 2;
+      const _sz = (1.8870 * _v + 1.4142 * _u) / 2;
+      dirLight.position.set(_sx - 50, 80, _sz - 50);
+      dirLight.target.position.set(_sx, 0, _sz);
+      dirLight.target.updateMatrixWorld(); }
 
     const isMoving = move.forward || move.back || move.left || move.right;
     if (isMoving && !blocked) {
@@ -1255,9 +1275,14 @@ function animate() {
   if (isGameActive() && autoplayActive) {
     const px = controls.getObject().position.x;
     const pz = controls.getObject().position.z;
-    dirLight.position.set(px - 50, 80, pz - 50);
-    dirLight.target.position.set(px, 0, pz);
-    dirLight.target.updateMatrixWorld();
+    { const _t = 160 / 2048;
+      const _u = Math.round(0.7071 * (pz - px) / _t) * _t;
+      const _v = Math.round(0.5299 * (px + pz) / _t) * _t;
+      const _sx = (1.8870 * _v - 1.4142 * _u) / 2;
+      const _sz = (1.8870 * _v + 1.4142 * _u) / 2;
+      dirLight.position.set(_sx - 50, 80, _sz - 50);
+      dirLight.target.position.set(_sx, 0, _sz);
+      dirLight.target.updateMatrixWorld(); }
   }
 
   if (isGameActive() && !dropping) {
