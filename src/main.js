@@ -83,6 +83,8 @@ const COLOR_FLOOR_EMISSIVE = 0x000000;
 // ── Pilastri ──────────────────────────────────────────────────
 const COLOR_PILLAR           = 0xffffff;  // materiale con texture (MeshStandardMaterial)
 const COLOR_PILLAR_INSTANCED = 0x888888;  // materiale instanced mesh
+const PILLAR_HEIGHT          = 5.5;       // altezza dei pilastri
+const PILLAR_SINK            = 0.4;       // quanto i pilastri affondano nel terreno (aumenta se sembrano sospesi)
 
 // ─────────────────────────────────────────────────────────────
 // VALORI LUCI
@@ -765,7 +767,7 @@ function startGameDirectly() {
 
 function addInstancedBlocks(data) {
   const pilastroWidth  = 2.3;
-  const pilastroHeight = 4.6;
+  const pilastroHeight = PILLAR_HEIGHT;
 
   const geometry = new THREE.BoxGeometry(pilastroWidth, pilastroHeight, pilastroWidth);
   geometry.setAttribute('uv2', geometry.attributes.uv);
@@ -786,7 +788,7 @@ function addInstancedBlocks(data) {
     const x   = col * SPACING - halfGrid;
     const z   = row * SPACING - halfGrid;
     const terrainY = getTerrainHeight(x, z);
-    const y        = (pilastroHeight / 2) + terrainY - 0.15;
+    const y        = (pilastroHeight / 2) + terrainY - PILLAR_SINK;
 
     instancedMesh.setMatrixAt(index, new THREE.Matrix4().makeTranslation(x, y, z));
 
@@ -809,7 +811,7 @@ function addInstancedBlocks(data) {
 
 function createBorderPillars() {
   const pilastroWidth  = 2.3;
-  const pilastroHeight = 4.6;
+  const pilastroHeight = PILLAR_HEIGHT;
   const hw = pilastroWidth / 2;
 
   const outerOffset = SPACING;
@@ -836,7 +838,7 @@ function createBorderPillars() {
 
   borderPos.forEach(({ x, z }, i) => {
     const terrainY = getTerrainHeight(x, z);
-    const y = (pilastroHeight / 2) + terrainY - 0.15;
+    const y = (pilastroHeight / 2) + terrainY - PILLAR_SINK;
     borderMesh.setMatrixAt(i, new THREE.Matrix4().makeTranslation(x, y, z));
 
     colliderBoxes.push(new THREE.Box3(
@@ -924,7 +926,13 @@ function setupControls() {
       if (document.pointerLockElement) return; // lock acquisito, non rilasciato
       if (gameState !== 'playing') return;
 
-      if (autoplayActive) stopAutoplay();
+      if (autoplayActive) {
+        stopAutoplay();
+        // controls.disconnect() era attivo durante l'autoplay, quindi isLocked
+        // non è stato aggiornato dal listener interno di PointerLockControls.
+        // Lo resettiamo manualmente per evitare che il mouse ruoti la camera.
+        controls.isLocked = false;
+      }
 
       // Disabilita il movimento
       move.forward = move.back = move.left = move.right = false;
