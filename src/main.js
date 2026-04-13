@@ -675,6 +675,14 @@ async function init() {
     animate();
 
     window.addEventListener('resize', onWindowResize);
+
+    // Rimuove il loading overlay con fade-out
+    const overlay = document.getElementById('loading-overlay');
+    if (overlay) {
+      overlay.style.transition = 'opacity 0.6s ease';
+      overlay.style.opacity = '0';
+      setTimeout(() => overlay.remove(), 650);
+    }
   } catch (err) {
     console.error('Errore caricamento dati:', err);
   }

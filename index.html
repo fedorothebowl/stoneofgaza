@@ -7,11 +7,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Experience 'Stones of Gaza,' a powerful digital memorial installation where each pillar represents a life lost. This interactive artwork transforms Gaza Ministry of Health data into a living monument of collective memory and testimony.">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <link rel="preload" href="/src/style.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
-  <noscript><link rel="stylesheet" href="/src/style.css"></noscript>
+  <link rel="stylesheet" href="/src/style.css">
 </head>
 
   <body>
+  <!-- Loading overlay: inline style per apparire subito, prima ancora del CSS -->
+  <div id="loading-overlay" style="position:fixed;inset:0;background:#101010;z-index:99999;display:grid;place-items:center">
+    <p style="color:#666;font-family:sans-serif;font-size:12px;letter-spacing:0.15em;text-transform:uppercase">Loading…</p>
+  </div>
     
   <audio loop autoplay muted playsinline id="bg-audio">
     <source src="/freesound_community-low-pitched-drone-scary-34446.mp3" type="audio/mpeg">
