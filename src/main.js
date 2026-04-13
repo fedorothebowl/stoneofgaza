@@ -11,6 +11,12 @@ const speed = 1.44;
 const clock = new THREE.Clock();
 let velocity = new THREE.Vector3();
 
+// Head bob
+const BOB_FREQ = Math.PI; // ~1.8 cicli/s — un passo ogni ~0.55s a velocità 1.44
+const BOB_AMP  = 0.02;          // ampiezza verticale (world units)
+let bobTimer = 0;
+let bobBlend = 0;                 // 0 = fermo, 1 = in cammino (fade in/out)
+
 // ─────────────────────────────────────────────────────────────
 // MOLTIPLICATORE VELOCITÀ (test: 10.0 — produzione: 1.0)
 // Scala: movimento manuale, autoplay walk, animazioni turn/snap/pitch,
@@ -83,8 +89,7 @@ const COLOR_FLOOR_EMISSIVE = 0x000000;
 // ── Pilastri ──────────────────────────────────────────────────
 const COLOR_PILLAR           = 0xffffff;  // materiale con texture (MeshStandardMaterial)
 const COLOR_PILLAR_INSTANCED = 0x888888;  // materiale instanced mesh
-const PILLAR_HEIGHT          = 5.2;       // altezza dei pilastri
-const PILLAR_SINK            = 0.4;       // quanto i pilastri affondano nel terreno (aumenta se sembrano sospesi)
+const PILLAR_HEIGHT          = 4.5;       // altezza dei pilastri
 
 // ─────────────────────────────────────────────────────────────
 // VALORI LUCI
@@ -366,6 +371,9 @@ function updateAutoplay(delta) {
   // 1.0 = normale, 10.0 = 10× più veloce. Le costanti di durata restano intatte.
   const apTimerScaled = apTimer * DEV_SPEED_MULT;
 
+  // Bob fade-out quando autoplay non cammina
+  if (apSub !== 'walking') bobBlend += (0 - bobBlend) * Math.min(1, 6 * delta);
+
   if (apSub === 'snapping') {
     const dir        = AP_DIRS[apDirIdx];
     const SNAP_SPEED = 18.0 * DEV_SPEED_MULT;
@@ -413,8 +421,11 @@ function updateAutoplay(delta) {
     } else {
       camObj.position.copy(newPos);
 
+      bobTimer += step;
+      bobBlend += (1 - bobBlend) * Math.min(1, 6 * delta);
+      const bobOffset = Math.sin(bobTimer * BOB_FREQ) * BOB_AMP * bobBlend;
       const th = getTerrainHeight(newPos.x, newPos.z);
-      camObj.position.y += ((th + GROUND_HEIGHT_OFFSET) - camObj.position.y) * 0.25;
+      camObj.position.y += ((th + GROUND_HEIGHT_OFFSET + bobOffset) - camObj.position.y) * 0.25;
 
       let yawDiff = apYawTarget - getCameraYaw();
       yawDiff = ((yawDiff + Math.PI) % (Math.PI * 2)) - Math.PI;
@@ -665,24 +676,13 @@ function createDarkSky() {
   return new THREE.Mesh(skyGeometry, skyMaterial);
 }
 
-function getTerrainHeight(x, z) {
-  const freq1 = 0.06, freq2 = 0.12, freq3 = 0.22;
-  const h1 = Math.sin(x * freq1) * Math.cos(z * freq1) * 0.6;
-  const h2 = Math.sin(x * freq2 + 1.5) * Math.sin(z * freq2 + 1.2) * 0.4;
-  const h3 = Math.sin(x * freq3 * 2) * 0.15 + Math.cos(z * freq3 * 2) * 0.15;
-  const detail = Math.sin(x * 0.4) * Math.cos(z * 0.4) * 0.1;
-  return Math.max(-0.6, Math.min(0.7, h1 + h2 + h3 + detail));
+function getTerrainHeight(_x, _z) {
+  return 0;
 }
 
 function createTerrain(width, depth, segments) {
   const geometry = new THREE.PlaneGeometry(width, depth, segments, segments);
   geometry.rotateX(-Math.PI / 2);
-
-  const positions = geometry.attributes.position.array;
-  for (let i = 0; i < positions.length; i += 3) {
-    positions[i + 1] = getTerrainHeight(positions[i], positions[i + 2]);
-  }
-  geometry.computeVertexNormals();
 
   const material = new THREE.MeshStandardMaterial({
     color:    COLOR_FLOOR,
@@ -811,20 +811,19 @@ function addInstancedBlocks(data) {
     const row = Math.floor(index / gridSize);
     const x   = col * SPACING - halfGrid;
     const z   = row * SPACING - halfGrid;
-    const terrainY = getTerrainHeight(x, z);
-    const y        = (pilastroHeight / 2) + terrainY - PILLAR_SINK;
+    const y = pilastroHeight / 2 - 0.1;
 
     instancedMesh.setMatrixAt(index, new THREE.Matrix4().makeTranslation(x, y, z));
 
     const hw = pilastroWidth / 2;
     colliderBoxes.push(new THREE.Box3(
-      new THREE.Vector3(x - hw, terrainY,                  z - hw),
-      new THREE.Vector3(x + hw, terrainY + pilastroHeight, z + hw)
+      new THREE.Vector3(x - hw, 0,             z - hw),
+      new THREE.Vector3(x + hw, pilastroHeight, z + hw)
     ));
 
     items.push({
       basePos: new THREE.Vector3(x, y, z),
-      pillarHalfW: hw, pillarH: pilastroHeight, terrainY,
+      pillarHalfW: hw, pillarH: pilastroHeight,
       en_name: item.en_name, ar_name: item.ar_name, age: item.age,
       planes: []
     });
@@ -861,13 +860,12 @@ function createBorderPillars() {
   scene.add(borderMesh);
 
   borderPos.forEach(({ x, z }, i) => {
-    const terrainY = getTerrainHeight(x, z);
-    const y = (pilastroHeight / 2) + terrainY - PILLAR_SINK;
+    const y = pilastroHeight / 2 - 0.1;
     borderMesh.setMatrixAt(i, new THREE.Matrix4().makeTranslation(x, y, z));
 
     colliderBoxes.push(new THREE.Box3(
-      new THREE.Vector3(x - hw, terrainY - 1,              z - hw),
-      new THREE.Vector3(x + hw, terrainY + pilastroHeight, z + hw)
+      new THREE.Vector3(x - hw, -1,             z - hw),
+      new THREE.Vector3(x + hw, pilastroHeight, z + hw)
     ));
   });
 
@@ -998,15 +996,11 @@ function setupControls() {
         return;
       }
       
-      if (gameState === 'playing') {
-        if (autoplayActive) stopAutoplay();
-      }
-      
       switch (e.code) {
-        case 'ArrowUp':    case 'KeyW': move.forward = true;  break;
-        case 'ArrowDown':  case 'KeyS': move.back    = true;  break;
-        case 'ArrowLeft':  case 'KeyA': move.left    = true;  break;
-        case 'ArrowRight': case 'KeyD': move.right   = true;  break;
+        case 'ArrowUp':    case 'KeyW': if (autoplayActive) stopAutoplay(); move.forward = true;  break;
+        case 'ArrowDown':  case 'KeyS': if (autoplayActive) stopAutoplay(); move.back    = true;  break;
+        case 'ArrowLeft':  case 'KeyA': if (autoplayActive) stopAutoplay(); move.left    = true;  break;
+        case 'ArrowRight': case 'KeyD': if (autoplayActive) stopAutoplay(); move.right   = true;  break;
         case 'KeyF':
           if (autoplayActive) stopAutoplay(); else startAutoplay();
           break;
@@ -1120,7 +1114,7 @@ function createEngravedTexture(en_name, ar_name, age) {
   const enLines = wrapText(en_name || 'Unknown',   maxW, 30);
   const lineH   = 46;
   const blockH  = (arLines.length + enLines.length + 1) * lineH + 30;
-  let y = (H - blockH) / 2 + 50;
+  let y = (H - blockH) / 2;
 
   arLines.forEach(l => { carveText(l, cx, y, 34); y += lineH; });
   y += 18;
@@ -1137,7 +1131,7 @@ function createEngravedTexture(en_name, ar_name, age) {
 function createEngravingPlanes(item) {
   const hw = item.pillarHalfW, ph = item.pillarH;
   const cx = item.basePos.x, cz = item.basePos.z;
-  const cy = item.terrainY + ph / 2;
+  const cy = ph / 2;
   const offset = 0.02;
   const tex = createEngravedTexture(item.en_name, item.ar_name, item.age);
 
@@ -1244,9 +1238,13 @@ function animate() {
 
     if (!blocked) {
       controls.getObject().position.copy(newPos);
-      const th = getTerrainHeight(newPos.x, newPos.z);
-      const ch = controls.getObject().position.y;
-      controls.getObject().position.y = ch + ((th + GROUND_HEIGHT_OFFSET) - ch) * 0.25;
+      const th  = getTerrainHeight(newPos.x, newPos.z);
+      const ch  = controls.getObject().position.y;
+      const _walking = move.forward || move.back || move.left || move.right;
+      if (_walking) { bobTimer += moveVector.length(); bobBlend += (1 - bobBlend) * Math.min(1, 6 * delta); }
+      else          { bobBlend += (0 - bobBlend) * Math.min(1, 6 * delta); }
+      const bob = Math.sin(bobTimer * BOB_FREQ) * BOB_AMP * bobBlend;
+      controls.getObject().position.y = ch + ((th + GROUND_HEIGHT_OFFSET + bob) - ch) * 0.25;
     }
 
     const px = controls.getObject().position.x;
