@@ -139,6 +139,7 @@ let apDirIdx         = 0;
 let apIntersCount    = 0;
 let apIntersTarget   = 1;
 let apSnapTarget     = 0;
+let _stopAfterSnap   = false;
 
 let apReadPhase      = '';
 let apTiltPitchStart = 0;
@@ -298,48 +299,60 @@ async function connectArduino() {
     alert('Web Serial API non supportata. Usa Chrome o Edge aggiornato.');
     return;
   }
+  let port = null;
+  let reader = null;
   try {
-    const port = await navigator.serial.requestPort();
-    await port.open({ baudRate: 9600 });
+    port = await navigator.serial.requestPort();
+    for (let i = 1; i <= 5; i++) {
+      try { await port.open({ baudRate: 9600 }); break; }
+      catch (e) {
+        if (i === 5) throw e;
+        console.warn(`[Arduino] porta occupata, riprovo (${i}/5)...`);
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
     console.log('[Arduino] connesso');
 
-    const decoder = new TextDecoderStream();
-    port.readable.pipeTo(decoder.writable);
-    const reader = decoder.readable.getReader();
+    // Legge direttamente senza pipeTo (più facile da chiudere correttamente)
+    const textDecoder = new TextDecoder();
+    reader = port.readable.getReader();
 
     let buffer = '';
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      buffer += value;
+      buffer += textDecoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
-      buffer = lines.pop(); // tiene l'ultima riga incompleta
+      buffer = lines.pop();
       for (const line of lines) {
         const cmd = line.trim();
-        console.log('[Arduino] ricevuto:', cmd, '| gameState:', gameState);
         if (gameState !== 'playing') continue;
         if (cmd === '1' && !autoplayActive && !dropping) startAutoplay();
-        else if (cmd === '0' && autoplayActive) stopAutoplay();
+        else if (cmd === '0' && autoplayActive && !_stopAfterSnap) stopAutoplay();
       }
     }
   } catch (e) {
-    console.warn('[Arduino] disconnesso o errore:', e.message);
+    console.warn('[Arduino] disconnesso:', e.message);
+  } finally {
+    try { await reader?.cancel(); } catch (_) {}
+    try { reader?.releaseLock(); } catch (_) {}
+    try { await port?.close(); } catch (_) {}
+    try { await port?.forget(); } catch (_) {} // rimuove il permesso così requestPort mostra il dialog
+    console.log('[Arduino] porta chiusa — premi A per riconnettere');
   }
 }
 
 function startAutoplay() {
   autoplayActive = true;
-  apTimer = 0;
 
-  // Disconnette PointerLockControls per evitare che micro-movimenti
-  // del mouse sovrascrivano la rotazione scritta dall'autoplay ogni frame.
-  // ESC/pausa gestiti dal listener nativo 'pointerlockchange' (vedi setupControls).
   if (controls) controls.disconnect();
 
-  // Azzera il roll residuo (solo precauzione)
+  // Azzera il roll residuo
   _pitchEuler.setFromQuaternion(camera.quaternion, 'YXZ');
   _pitchEuler.z = 0;
   camera.quaternion.setFromEuler(_pitchEuler);
+
+  apTimer = 0;
 
   const curYaw = getCameraYaw();
   const camPos = controls.getObject().position;
@@ -367,16 +380,26 @@ function startAutoplay() {
 }
 
 function stopAutoplay() {
-  autoplayActive = false;
+  if (_stopAfterSnap) return; // già in uscita
+  _stopAfterSnap = true;
+
+  // Durante 'reading', apYawTarget punta al pilastro — usiamo apReadYawBack (corridoio)
+  apYawTarget  = (apSub === 'reading') ? apReadYawBack : apYawTarget;
+  apYawStart   = getCameraYaw();
+  apSnapTarget = nearestCorridorCenter(controls.getObject().position, apDirIdx);
+  apSub        = 'snapping';
+
   move.forward = move.back = move.left = move.right = false;
-
-  // Riconnette: il mouse torna a controllare la camera.
-  if (controls) controls.connect();
-
   if (footstepAudio && !footstepAudio.paused) {
     footstepAudio.pause();
     footstepAudio.currentTime = 0;
   }
+}
+
+function _finalizeStopAutoplay() {
+  _stopAfterSnap = false;
+  autoplayActive = false;
+  if (controls) controls.connect();
 }
 
 function updateAutoplay(delta) {
@@ -394,7 +417,7 @@ function updateAutoplay(delta) {
   if (apSub !== 'reading') {
     const px = getCameraPitch();
     if (Math.abs(px) > 0.001) {
-      const t = 1.0 - Math.exp(-3.5 * DEV_SPEED_MULT * delta);
+      const t = 1.0 - Math.exp(-(_stopAfterSnap ? 1.5 : 3.5) * DEV_SPEED_MULT * delta);
       setCameraPitch(THREE.MathUtils.lerp(px, 0, t));
     } else {
       setCameraPitch(0);
@@ -411,25 +434,36 @@ function updateAutoplay(delta) {
 
   if (apSub === 'snapping') {
     const dir        = AP_DIRS[apDirIdx];
-    const SNAP_SPEED = 18.0 * DEV_SPEED_MULT;
+    const SNAP_SPEED = (_stopAfterSnap ? 2.5 : 18.0) * DEV_SPEED_MULT;
 
     if (dir.z !== 0) {
       const diff = apSnapTarget - camObj.position.x;
-      if (Math.abs(diff) < 0.02) { camObj.position.x = apSnapTarget; apSub = 'walking'; }
-      else camObj.position.x += Math.sign(diff) * Math.min(Math.abs(diff), SNAP_SPEED * delta);
+      if (Math.abs(diff) < 0.02) {
+        camObj.position.x = apSnapTarget;
+        if (_stopAfterSnap) {
+          let yd = apYawTarget - getCameraYaw();
+          yd = ((yd + Math.PI) % (Math.PI * 2)) - Math.PI;
+          if (Math.abs(yd) < 0.01 && Math.abs(getCameraPitch()) < 0.01) _finalizeStopAutoplay();
+        } else { apSub = 'walking'; }
+      } else camObj.position.x += Math.sign(diff) * Math.min(Math.abs(diff), SNAP_SPEED * delta);
     } else {
       const diff = apSnapTarget - camObj.position.z;
-      if (Math.abs(diff) < 0.02) { camObj.position.z = apSnapTarget; apSub = 'walking'; }
-      else camObj.position.z += Math.sign(diff) * Math.min(Math.abs(diff), SNAP_SPEED * delta);
+      if (Math.abs(diff) < 0.02) {
+        camObj.position.z = apSnapTarget;
+        if (_stopAfterSnap) {
+          let yd = apYawTarget - getCameraYaw();
+          yd = ((yd + Math.PI) % (Math.PI * 2)) - Math.PI;
+          if (Math.abs(yd) < 0.01 && Math.abs(getCameraPitch()) < 0.01) _finalizeStopAutoplay();
+        } else { apSub = 'walking'; }
+      } else camObj.position.z += Math.sign(diff) * Math.min(Math.abs(diff), SNAP_SPEED * delta);
     }
 
-    // Corregge lo yaw durante lo snap (usa camera.rotation.y che ora è YXZ-coerente)
-    let yawDiff = apYawTarget - getCameraYaw();
-    yawDiff = ((yawDiff + Math.PI) % (Math.PI * 2)) - Math.PI;
+    // Corregge lo yaw durante lo snap — shortestYaw garantisce sempre il percorso più breve
+    const yawDiff = shortestYaw(getCameraYaw(), apYawTarget);
     if (Math.abs(yawDiff) < 0.001) {
       setCameraYaw(apYawTarget);
     } else {
-      camera.rotation.y += yawDiff * Math.min(1, 8 * DEV_SPEED_MULT * delta);
+      setCameraYaw(getCameraYaw() + yawDiff * Math.min(1, (_stopAfterSnap ? 2.0 : 8.0) * DEV_SPEED_MULT * delta));
     }
     return;
   }
