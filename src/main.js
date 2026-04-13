@@ -7,12 +7,12 @@ const isMobile = /Android|iPhone|iPad|iPod|Touch/i.test(navigator.userAgent)
 
 let camera, scene, renderer, controls;
 const move = { forward: false, back: false, left: false, right: false };
-const speed = 1.44;
+const speed = 2;
 const clock = new THREE.Clock();
 let velocity = new THREE.Vector3();
 
 // Head bob
-const BOB_FREQ = Math.PI; // ~1.8 cicli/s — un passo ogni ~0.55s a velocità 1.44
+const BOB_FREQ = Math.PI; // ~1.8 cicli/s — un passo ogni ~0.55s a velocità 2
 const BOB_AMP  = 0.02;          // ampiezza verticale (world units)
 let bobTimer = 0;
 let bobBlend = 0;                 // 0 = fermo, 1 = in cammino (fade in/out)
@@ -113,7 +113,7 @@ const TARGET_FOG_DENSITY  = 0.1;
 // ─────────────────────────────────────────────────────────────
 // AUTOPLAY
 // ─────────────────────────────────────────────────────────────
-const AUTOPLAY_WALK_SPEED   = 1.44;
+const AUTOPLAY_WALK_SPEED   = 2;
 const AUTOPLAY_TURN_SECONDS = 2.6;
 
 // ── Reading ───────────────────────────────────────────────────
@@ -290,6 +290,41 @@ function distToNextPillar(pos, dirIdx) {
   }
   if (dist < CAMERA_RADIUS) dist += S;
   return dist;
+}
+
+// ── Arduino via Web Serial API ────────────────────────────────────────────────
+async function connectArduino() {
+  if (!('serial' in navigator)) {
+    alert('Web Serial API non supportata. Usa Chrome o Edge aggiornato.');
+    return;
+  }
+  try {
+    const port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 9600 });
+    console.log('[Arduino] connesso');
+
+    const decoder = new TextDecoderStream();
+    port.readable.pipeTo(decoder.writable);
+    const reader = decoder.readable.getReader();
+
+    let buffer = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += value;
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // tiene l'ultima riga incompleta
+      for (const line of lines) {
+        const cmd = line.trim();
+        console.log('[Arduino] ricevuto:', cmd, '| gameState:', gameState);
+        if (gameState !== 'playing') continue;
+        if (cmd === '1' && !autoplayActive && !dropping) startAutoplay();
+        else if (cmd === '0' && autoplayActive) stopAutoplay();
+      }
+    }
+  } catch (e) {
+    console.warn('[Arduino] disconnesso o errore:', e.message);
+  }
 }
 
 function startAutoplay() {
@@ -987,6 +1022,12 @@ function setupControls() {
     });
 
     window.addEventListener('keydown', (e) => {
+      // Tasto A durante intro → connetti Arduino
+      if (e.code === 'KeyA' && gameState === 'intro') {
+        connectArduino();
+        return;
+      }
+
       // Blocca gli input del gioco se in pausa
       if (gameState !== 'playing') {
         // Previeni anche la gestione dei tasti di movimento
