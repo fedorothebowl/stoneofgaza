@@ -22,7 +22,7 @@ let bobBlend = 0;                 // 0 = fermo, 1 = in cammino (fade in/out)
 // Scala: movimento manuale, autoplay walk, animazioni turn/snap/pitch,
 //        eye adaptation, idle delay, caduta iniziale.
 // ─────────────────────────────────────────────────────────────
-const DEV_SPEED_MULT = 1.44;
+const DEV_SPEED_MULT = 1;
 
 // Dati caricati
 let TOTAL_COUNT = 0;
@@ -500,7 +500,7 @@ function updateAutoplay(delta) {
       }
 
     } else if (apReadPhase === 'tilt_up') {
-      const t    = Math.min(1, apTimerScaled / (READING_TILT_SECS * DEV_SPEED_MULT));
+      const t    = Math.min(1, apTimerScaled / READING_TILT_SECS);
       const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
       setCameraPitch(apTiltPitchStart + (READING_PITCH - apTiltPitchStart) * ease);
       if (t >= 1) { setCameraPitch(READING_PITCH); apReadPhase = 'pause'; apTimer = 0; }
@@ -512,7 +512,7 @@ function updateAutoplay(delta) {
       }
 
     } else if (apReadPhase === 'tilt_down') {
-      const t    = Math.min(1, apTimerScaled / (READING_TILT_SECS * DEV_SPEED_MULT));
+      const t    = Math.min(1, apTimerScaled / READING_TILT_SECS);
       const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
       setCameraPitch(apTiltPitchStart * (1 - ease));
       if (t >= 1) {
@@ -1002,7 +1002,7 @@ function setupControls() {
         case 'ArrowLeft':  case 'KeyA': if (autoplayActive) stopAutoplay(); move.left    = true;  break;
         case 'ArrowRight': case 'KeyD': if (autoplayActive) stopAutoplay(); move.right   = true;  break;
         case 'KeyF':
-          if (autoplayActive) stopAutoplay(); else startAutoplay();
+          if (!dropping) { if (autoplayActive) stopAutoplay(); else startAutoplay(); }
           break;
       }
     });
