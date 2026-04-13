@@ -7,7 +7,7 @@ const isMobile = /Android|iPhone|iPad|iPod|Touch/i.test(navigator.userAgent)
 
 let camera, scene, renderer, controls;
 const move = { forward: false, back: false, left: false, right: false };
-const speed = 2.5;
+const speed = 1.44;
 const clock = new THREE.Clock();
 let velocity = new THREE.Vector3();
 
@@ -54,6 +54,35 @@ let skyMesh;
 
 // Materiale condiviso per tutti i pilastri (principale + bordo)
 let sharedPillarMaterial = null;
+
+// ─────────────────────────────────────────────────────────────
+// COLORI SCENA
+// ─────────────────────────────────────────────────────────────
+
+// ── Cielo ─────────────────────────────────────────────────────
+const COLOR_SKY_TOP    = 0x505050;   // zenith
+const COLOR_SKY_MID    = 0x606060;   // orizzonte
+const COLOR_SKY_BOTTOM = 0x404040;   // sotto l'orizzonte
+
+// ── Nebbia e sfondo renderer ──────────────────────────────────
+const COLOR_FOG        = 0x202020;
+const COLOR_CLEAR      = 0x101010;
+
+// ── Luci ──────────────────────────────────────────────────────
+const COLOR_HEMI_SKY    = 0x404040;  // HemisphereLight — lato cielo
+const COLOR_HEMI_GROUND = 0x202020;  // HemisphereLight — lato terra
+const COLOR_DIRECTIONAL = 0x707070;
+const COLOR_AMBIENT     = 0x303030;
+const COLOR_FILL        = 0x505050;
+const COLOR_BACK        = 0x404040;
+
+// ── Terreno ───────────────────────────────────────────────────
+const COLOR_FLOOR          = 0x000000;
+const COLOR_FLOOR_EMISSIVE = 0x000000;
+
+// ── Pilastri ──────────────────────────────────────────────────
+const COLOR_PILLAR           = 0xffffff;  // materiale con texture (MeshStandardMaterial)
+const COLOR_PILLAR_INSTANCED = 0x888888;  // materiale instanced mesh
 
 // ─────────────────────────────────────────────────────────────
 // VALORI LUCI
@@ -566,7 +595,7 @@ function createPillarMaterial() {
     metalness:      0.08,
     aoMap:          loadTex('lichen_rock_ao_1k.jpg'),
     aoMapIntensity: 1.4,
-    color:          0xffffff,
+    color:          COLOR_PILLAR,
     side:           THREE.FrontSide
   });
 }
@@ -600,9 +629,9 @@ function createDarkSky() {
       }
     `,
     uniforms: {
-      topColor:    { value: new THREE.Color(0x505050) },
-      midColor:    { value: new THREE.Color(0x606060) },
-      bottomColor: { value: new THREE.Color(0x404040) },
+      topColor:    { value: new THREE.Color(COLOR_SKY_TOP) },
+      midColor:    { value: new THREE.Color(COLOR_SKY_MID) },
+      bottomColor: { value: new THREE.Color(COLOR_SKY_BOTTOM) },
       intensity:   { value: INITIAL_SKY }
     },
     side: THREE.BackSide
@@ -630,11 +659,11 @@ function createTerrain(width, depth, segments) {
   geometry.computeVertexNormals();
 
   const material = new THREE.MeshStandardMaterial({
-    color: 0x000000,
+    color:    COLOR_FLOOR,
     roughness: 0.7,
     metalness: 0.1,
-    emissive: 0x000000,
-    side: THREE.DoubleSide
+    emissive: COLOR_FLOOR_EMISSIVE,
+    side:     THREE.DoubleSide
   });
 
   const terrain = new THREE.Mesh(geometry, material);
@@ -652,7 +681,7 @@ function setupScene() {
   skyMesh = createDarkSky();
   scene.add(skyMesh);
 
-  scene.fog = new THREE.FogExp2(0x202020, INITIAL_FOG_DENSITY);
+  scene.fog = new THREE.FogExp2(COLOR_FOG, INITIAL_FOG_DENSITY);
 
   camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 5000);
   camera.position.set(SPACING / 2, START_HEIGHT, SPACING / 2);
@@ -667,17 +696,17 @@ function setupScene() {
 
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setClearColor(0x101010);
+  renderer.setClearColor(COLOR_CLEAR);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   document.querySelector("main").appendChild(renderer.domElement);
 
   document.getElementById("sad-count").innerHTML = TOTAL_COUNT;
 
-  hemisphereLight = new THREE.HemisphereLight(0x404040, 0x202020, INITIAL_HEMISPHERE);
+  hemisphereLight = new THREE.HemisphereLight(COLOR_HEMI_SKY, COLOR_HEMI_GROUND, INITIAL_HEMISPHERE);
   scene.add(hemisphereLight);
 
-  dirLight = new THREE.DirectionalLight(0x707070, INITIAL_DIRECTIONAL);
+  dirLight = new THREE.DirectionalLight(COLOR_DIRECTIONAL, INITIAL_DIRECTIONAL);
   dirLight.position.set(-50, 80, -50);
   dirLight.castShadow = true;
   dirLight.shadow.mapSize.width  = 2048;
@@ -691,14 +720,14 @@ function setupScene() {
   scene.add(dirLight);
   scene.add(dirLight.target);
 
-  ambientLight = new THREE.AmbientLight(0x303030, INITIAL_AMBIENT);
+  ambientLight = new THREE.AmbientLight(COLOR_AMBIENT, INITIAL_AMBIENT);
   scene.add(ambientLight);
 
-  fillLight = new THREE.PointLight(0x505050, INITIAL_FILL);
+  fillLight = new THREE.PointLight(COLOR_FILL, INITIAL_FILL);
   fillLight.position.set(10, 30, 10);
   scene.add(fillLight);
 
-  backLight = new THREE.PointLight(0x404040, INITIAL_BACK);
+  backLight = new THREE.PointLight(COLOR_BACK, INITIAL_BACK);
   backLight.position.set(-20, 25, -30);
   scene.add(backLight);
 
@@ -710,19 +739,6 @@ function setupScene() {
   terrainMesh = createTerrain(terrainWidth, terrainDepth, segments);
   scene.add(terrainMesh);
 
-  const grassGeometry = new THREE.BufferGeometry();
-  const grassCount = 3000;
-  const grassPositions = new Float32Array(grassCount * 3);
-  for (let i = 0; i < grassCount; i++) {
-    const x = (Math.random() - 0.5) * terrainWidth;
-    const z = (Math.random() - 0.5) * terrainDepth;
-    grassPositions[i * 3]     = x;
-    grassPositions[i * 3 + 1] = getTerrainHeight(x, z) + 0.05;
-    grassPositions[i * 3 + 2] = z;
-  }
-  grassGeometry.setAttribute('position', new THREE.BufferAttribute(grassPositions, 3));
-  const grassMaterial = new THREE.PointsMaterial({ color: 0x5a6a4a, size: 0.08, transparent: true, opacity: 0.4 });
-  scene.add(new THREE.Points(grassGeometry, grassMaterial));
 }
 
 function setupFootstepAudio() {
@@ -1102,7 +1118,7 @@ function createEngravingPlanes(item) {
     const mat = new THREE.MeshStandardMaterial({
       map: tex, transparent: true, opacity: 1.0,
       depthWrite: false, depthTest: true, alphaTest: 0.0,
-      roughness: 0.95, metalness: 0.0, color: 0x888888,
+      roughness: 0.95, metalness: 0.0, color: COLOR_PILLAR_INSTANCED,
       emissive: new THREE.Color(0xffffff), emissiveMap: tex, emissiveIntensity: 0.0,
       side: THREE.DoubleSide
     });
