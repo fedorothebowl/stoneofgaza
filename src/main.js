@@ -75,10 +75,10 @@ const COLOR_FOG        = 0x202020;
 const COLOR_CLEAR      = 0x101010;
 
 // ── Luci ──────────────────────────────────────────────────────
-const COLOR_HEMI_SKY    = 0x404040;  // HemisphereLight — lato cielo
-const COLOR_HEMI_GROUND = 0x202020;  // HemisphereLight — lato terra
+const COLOR_HEMI_SKY    = 0x505050;  // HemisphereLight — lato cielo
+const COLOR_HEMI_GROUND = 0x404040;  // HemisphereLight — lato terra
 const COLOR_DIRECTIONAL = 0x707070;
-const COLOR_AMBIENT     = 0x303030;
+const COLOR_AMBIENT     = 0x484848;
 const COLOR_FILL        = 0x505050;
 const COLOR_BACK        = 0x404040;
 
@@ -88,7 +88,6 @@ const COLOR_FLOOR_EMISSIVE = 0x000000;
 
 // ── Pilastri ──────────────────────────────────────────────────
 const COLOR_PILLAR           = 0xffffff;  // materiale con texture (MeshStandardMaterial)
-const COLOR_PILLAR_INSTANCED = 0x888888;  // materiale instanced mesh
 const PILLAR_HEIGHT          = 4.5;       // altezza dei pilastri
 
 // ─────────────────────────────────────────────────────────────
@@ -97,16 +96,16 @@ const PILLAR_HEIGHT          = 4.5;       // altezza dei pilastri
 const INITIAL_HEMISPHERE  = 0.90 * 2;
 const INITIAL_DIRECTIONAL = 2.4  * 2;
 const INITIAL_AMBIENT     = 0.90 * 2;
-const INITIAL_FILL        = 0.70 * 2;
-const INITIAL_BACK        = 0.50 * 2;
+const INITIAL_FILL        = 0;
+const INITIAL_BACK        = 0;
 const INITIAL_SKY         = 1.30 * 2;
 const INITIAL_FOG_DENSITY = 0.01;
 
 const TARGET_HEMISPHERE   = 0.90 * 3;
 const TARGET_DIRECTIONAL  = 2.4  * 3;
 const TARGET_AMBIENT      = 0.90 * 3;
-const TARGET_FILL         = 0.70 * 3;
-const TARGET_BACK         = 0.50 * 3;
+const TARGET_FILL         = 0;
+const TARGET_BACK         = 0;
 const TARGET_SKY          = 1.30 * 3;
 const TARGET_FOG_DENSITY  = 0.1;
 
@@ -518,7 +517,13 @@ function updateAutoplay(delta) {
         //    discreto (più evidente con DEV_SPEED_MULT > 1).
         snapToPillarRow(camObj, apDirIdx);
 
-        const sideOffset = Math.random() < 0.5 ? 1 : 3;
+        // Scegli la facciata illuminata dal sole:
+        // la faccia che guarda il giocatore ha normale = -AP_DIRS[sideDirIdx]
+        const lightDir = new THREE.Vector3()
+          .subVectors(dirLight.position, dirLight.target.position)
+          .normalize();
+        const illum1 = AP_DIRS[(apDirIdx + 1) % 4].clone().negate().dot(lightDir);
+        const sideOffset = illum1 >= 0 ? 1 : 3;
         const sideDirIdx = (apDirIdx + sideOffset) % 4;
 
         apReadYawBack = dirToYaw(AP_DIRS[apDirIdx]);
@@ -702,11 +707,11 @@ function createPillarMaterial() {
   return new THREE.MeshStandardMaterial({
     map:            loadTex('lichen_rock_diff_1k.jpg'),
     normalMap:      loadTex('lichen_rock_nor_gl_1k.jpg'),
-    normalScale:    new THREE.Vector2(2.0, 2.0),
+    normalScale:    new THREE.Vector2(0.35, 0.35),
     roughnessMap:   loadTex('lichen_rock_rough_1k.jpg'),
     roughness:      1.0,
     metalnessMap:   loadTex('lichen_rock_arm_1k.jpg'),
-    metalness:      0.08,
+    metalness:      0.75,
     aoMap:          loadTex('lichen_rock_ao_1k.jpg'),
     aoMapIntensity: 1.4,
     color:          COLOR_PILLAR,
@@ -763,8 +768,8 @@ function createTerrain(width, depth, segments) {
 
   const material = new THREE.MeshStandardMaterial({
     color:    COLOR_FLOOR,
-    roughness: 0.7,
-    metalness: 0.1,
+    roughness: 0.95,
+    metalness: 0.0,
     emissive: COLOR_FLOOR_EMISSIVE,
     side:     THREE.DoubleSide
   });
@@ -801,6 +806,7 @@ function setupScene() {
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(COLOR_CLEAR);
   renderer.shadowMap.enabled = true;
+
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   document.querySelector("main").appendChild(renderer.domElement);
 
@@ -810,7 +816,7 @@ function setupScene() {
   scene.add(hemisphereLight);
 
   dirLight = new THREE.DirectionalLight(COLOR_DIRECTIONAL, INITIAL_DIRECTIONAL);
-  dirLight.position.set(-50, 80, -50);
+  dirLight.position.set(-70, 75, -70);
   dirLight.castShadow = true;
   dirLight.shadow.mapSize.width  = 2048;
   dirLight.shadow.mapSize.height = 2048;
@@ -1024,10 +1030,13 @@ function setupControls() {
       if (gameState !== 'playing') return;
 
       if (autoplayActive) {
-        stopAutoplay();
-        // controls.disconnect() era attivo durante l'autoplay, quindi isLocked
-        // non è stato aggiornato dal listener interno di PointerLockControls.
-        // Lo resettiamo manualmente per evitare che il mouse ruoti la camera.
+        // Finalizza subito senza aspettare l'animazione di snap:
+        // stopAutoplay() mette apSub='snapping' e aspetta gameState==='playing'
+        // per completare — ma siamo già in pausa, quindi non arriva mai.
+        // _finalizeStopAutoplay() direttamente risolve lo stallo.
+        _stopAfterSnap = false;
+        autoplayActive = false;
+        controls.connect();
         controls.isLocked = false;
       }
 
@@ -1229,11 +1238,10 @@ function createEngravingPlanes(item) {
   ];
 
   return faces.map(({ pos, rotY, order }) => {
-    const mat = new THREE.MeshStandardMaterial({
+    const mat = new THREE.MeshBasicMaterial({
       map: tex, transparent: true, opacity: 1.0,
       depthWrite: false, depthTest: true, alphaTest: 0.0,
-      roughness: 0.95, metalness: 0.0, color: COLOR_PILLAR_INSTANCED,
-      emissive: new THREE.Color(0xffffff), emissiveMap: tex, emissiveIntensity: 0.0,
+      color: new THREE.Color(1, 1, 1),
       side: THREE.DoubleSide
     });
     const mesh = new THREE.Mesh(geo, mat);
@@ -1339,7 +1347,7 @@ function animate() {
       const _v = Math.round(0.5299 * (px + pz) / _t) * _t;
       const _sx = (1.8870 * _v - 1.4142 * _u) / 2;
       const _sz = (1.8870 * _v + 1.4142 * _u) / 2;
-      dirLight.position.set(_sx - 50, 80, _sz - 50);
+      dirLight.position.set(_sx - 70, 75, _sz - 70);
       dirLight.target.position.set(_sx, 0, _sz);
       dirLight.target.updateMatrixWorld(); }
 
@@ -1361,31 +1369,32 @@ function animate() {
       const _v = Math.round(0.5299 * (px + pz) / _t) * _t;
       const _sx = (1.8870 * _v - 1.4142 * _u) / 2;
       const _sz = (1.8870 * _v + 1.4142 * _u) / 2;
-      dirLight.position.set(_sx - 50, 80, _sz - 50);
+      dirLight.position.set(_sx - 70, 75, _sz - 70);
       dirLight.target.position.set(_sx, 0, _sz);
       dirLight.target.updateMatrixWorld(); }
   }
 
   if (isGameActive() && !dropping) {
+    const lightDir = new THREE.Vector3()
+      .subVectors(dirLight.position, dirLight.target.position)
+      .normalize();
+
     items.forEach(item => {
       const dist = camera.position.distanceTo(item.basePos);
 
-      if (dist < 18) {
-        const opacity = dist < 8 ? 1.0 : dist < 12 ? 0.5 : 0.2;
-
+      if (dist < 25) {
         if (item.planes.length === 0) {
           createEngravingPlanes(item).forEach(p => {
             scene.add(p);
             item.planes.push(p);
           });
         }
-
-        const glow = dist < 7 ? Math.pow(1 - dist / 7, 1.5) * 1.2 : 0.0;
         item.planes.forEach(p => {
-          p.material.opacity = opacity;
-          p.material.emissiveIntensity = glow;
+          const faceNormal = new THREE.Vector3(Math.sin(p.rotation.y), 0, Math.cos(p.rotation.y));
+          const illum = Math.max(0, faceNormal.dot(lightDir));
+          // Faccia illuminata → opacity 1.0, faccia in ombra → opacity 0.25
+          p.material.opacity = 0.25 + illum * 0.75;
         });
-
       } else if (item.planes.length > 0) {
         disposeEngravingPlanes(item);
       }
