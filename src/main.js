@@ -47,6 +47,17 @@ let gameState = 'intro';
 const bgAudio = document.getElementById('bg-audio');
 let footstepAudio;
 
+// Smuta la musica di sottofondo al primo gesto dell'utente (policy autoplay browser)
+function _unmuteBgOnce() {
+  if (bgAudio) { bgAudio.volume = 0.5; bgAudio.muted = false; bgAudio.play(); }
+  document.removeEventListener('click',      _unmuteBgOnce);
+  document.removeEventListener('touchstart',  _unmuteBgOnce);
+  document.removeEventListener('keydown',     _unmuteBgOnce);
+}
+document.addEventListener('click',      _unmuteBgOnce);
+document.addEventListener('touchstart',  _unmuteBgOnce);
+document.addEventListener('keydown',     _unmuteBgOnce);
+
 // Terreno
 let terrainMesh;
 let terrainWidth  = 0;
@@ -440,8 +451,7 @@ function updateAutoplay(delta) {
       if (Math.abs(diff) < 0.02) {
         camObj.position.x = apSnapTarget;
         if (_stopAfterSnap) {
-          let yd = apYawTarget - getCameraYaw();
-          yd = ((yd + Math.PI) % (Math.PI * 2)) - Math.PI;
+          let yd = wrapAngle(apYawTarget - getCameraYaw());
           if (Math.abs(yd) < 0.01 && Math.abs(getCameraPitch()) < 0.01) _finalizeStopAutoplay();
         } else { apSub = 'walking'; }
       } else camObj.position.x += Math.sign(diff) * Math.min(Math.abs(diff), SNAP_SPEED * delta);
@@ -450,8 +460,7 @@ function updateAutoplay(delta) {
       if (Math.abs(diff) < 0.02) {
         camObj.position.z = apSnapTarget;
         if (_stopAfterSnap) {
-          let yd = apYawTarget - getCameraYaw();
-          yd = ((yd + Math.PI) % (Math.PI * 2)) - Math.PI;
+          let yd = wrapAngle(apYawTarget - getCameraYaw());
           if (Math.abs(yd) < 0.01 && Math.abs(getCameraPitch()) < 0.01) _finalizeStopAutoplay();
         } else { apSub = 'walking'; }
       } else camObj.position.z += Math.sign(diff) * Math.min(Math.abs(diff), SNAP_SPEED * delta);
@@ -495,8 +504,7 @@ function updateAutoplay(delta) {
       const th = getTerrainHeight(newPos.x, newPos.z);
       camObj.position.y += ((th + GROUND_HEIGHT_OFFSET + bobOffset) - camObj.position.y) * 0.25;
 
-      let yawDiff = apYawTarget - getCameraYaw();
-      yawDiff = ((yawDiff + Math.PI) % (Math.PI * 2)) - Math.PI;
+      let yawDiff = wrapAngle(apYawTarget - getCameraYaw());
       if (Math.abs(yawDiff) < 0.001) {
         setCameraYaw(apYawTarget);
       } else {
@@ -564,8 +572,7 @@ function updateAutoplay(delta) {
     if (apReadPhase === 'turn_to') {
       const t    = Math.min(1, apTimerScaled / READING_TURN_SECS);
       const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-      let diff   = apYawTarget - apYawStart;
-      diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
+      let diff   = wrapAngle(apYawTarget - apYawStart);
       setCameraYaw(apYawStart + diff * ease);
       if (t >= 1) {
         setCameraYaw(apYawStart + diff);
@@ -606,8 +613,7 @@ function updateAutoplay(delta) {
     } else if (apReadPhase === 'turn_back') {
       const t    = Math.min(1, apTimerScaled / READING_TURN_SECS);
       const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-      let diff   = apYawTarget - apYawStart;
-      diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
+      let diff   = wrapAngle(apYawTarget - apYawStart);
       setCameraYaw(apYawStart + diff * ease);
       if (t >= 1) {
         setCameraYaw(apYawStart + diff);
@@ -628,8 +634,7 @@ function updateAutoplay(delta) {
     const t    = Math.min(1, apTimerScaled / AUTOPLAY_TURN_SECONDS);
     const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
 
-    let diff = apYawTarget - apYawStart;
-    diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
+    let diff = wrapAngle(apYawTarget - apYawStart);
     setCameraYaw(apYawStart + diff * ease);
 
     if (t >= 1) {
@@ -853,7 +858,7 @@ function setupScene() {
 function setupFootstepAudio() {
   footstepAudio = new Audio('freesound_community-footsteps-dirt-gravel-6823.mp3');
   footstepAudio.loop = true;
-  footstepAudio.volume = 0.5;
+  footstepAudio.volume = 0.625;
 }
 
 function startGameDirectly() {
@@ -864,7 +869,7 @@ function startGameDirectly() {
   gameState         = 'playing';
   dropping          = true;
 
-  if (bgAudio) { bgAudio.muted = false; bgAudio.play(); }
+  if (bgAudio) { bgAudio.volume = 0.5; bgAudio.muted = false; bgAudio.play(); }
   setupFootstepAudio();
 
   if (isMobile) {
@@ -991,6 +996,14 @@ function shortestYaw(from, to) {
   return d;
 }
 
+// Wrap un angolo in [-π, π] gestendo correttamente il modulo negativo di JS
+function wrapAngle(d) {
+  d = d % (Math.PI * 2);
+  if (d >  Math.PI) d -= Math.PI * 2;
+  if (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
 // normalizeYaw ora opera direttamente su camera.rotation.y (YXZ-coerente)
 // e aggiorna i riferimenti apYawStart/apYawTarget di conseguenza.
 function normalizeYaw() {
@@ -1021,7 +1034,7 @@ function setupControls() {
       }
       pauseScreen.classList.add('hidden');
       gameState = 'playing';
-      if (bgAudio) { bgAudio.muted = false; bgAudio.play(); }
+      if (bgAudio) { bgAudio.volume = 0.5; bgAudio.muted = false; bgAudio.play(); }
     });
 
     // ── FIX ESC/pausa ────────────────────────────────────────────────
