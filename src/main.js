@@ -797,7 +797,12 @@ function setupScene() {
   scene.fog = new THREE.FogExp2(COLOR_FOG, INITIAL_FOG_DENSITY);
 
   camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 5000);
-  camera.position.set(SPACING / 2, START_HEIGHT, SPACING / 2);
+  // I pilastri sono allineati a (col - (N-1)/2) * SPACING. Con N pari, SPACING/2
+  // cade esattamente su una colonna di pilastri → la camera atterrerebbe dentro
+  // un pilastro. Con N dispari, SPACING/2 è il centro del corridoio.
+  const _gridN = Math.ceil(Math.sqrt(TOTAL_COUNT));
+  const _camStart = (_gridN % 2 === 0) ? 0 : SPACING / 2;
+  camera.position.set(_camStart, START_HEIGHT, _camStart);
 
   // ── FIX PRINCIPALE: impostare l'ordine Euler della camera a 'YXZ'.
   //    Three.js usa 'XYZ' di default. PointerLockControls usa 'YXZ'
