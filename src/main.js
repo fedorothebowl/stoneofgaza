@@ -303,55 +303,6 @@ function distToNextPillar(pos, dirIdx) {
   return dist;
 }
 
-// ── Arduino via Web Serial API ────────────────────────────────────────────────
-async function connectArduino() {
-  if (!('serial' in navigator)) {
-    alert('Web Serial API non supportata. Usa Chrome o Edge aggiornato.');
-    return;
-  }
-  let port = null;
-  let reader = null;
-  try {
-    port = await navigator.serial.requestPort();
-    for (let i = 1; i <= 5; i++) {
-      try { await port.open({ baudRate: 9600 }); break; }
-      catch (e) {
-        if (i === 5) throw e;
-        console.warn(`[Arduino] porta occupata, riprovo (${i}/5)...`);
-        await new Promise(r => setTimeout(r, 1000));
-      }
-    }
-    console.log('[Arduino] connesso');
-
-    // Legge direttamente senza pipeTo (più facile da chiudere correttamente)
-    const textDecoder = new TextDecoder();
-    reader = port.readable.getReader();
-
-    let buffer = '';
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += textDecoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        const cmd = line.trim();
-        if (gameState !== 'playing') continue;
-        if (cmd === '1' && !autoplayActive && !dropping) startAutoplay();
-        else if (cmd === '0' && autoplayActive && !_stopAfterSnap) stopAutoplay();
-      }
-    }
-  } catch (e) {
-    console.warn('[Arduino] disconnesso:', e.message);
-  } finally {
-    try { await reader?.cancel(); } catch (_) {}
-    try { reader?.releaseLock(); } catch (_) {}
-    try { await port?.close(); } catch (_) {}
-    try { await port?.forget(); } catch (_) {} // rimuove il permesso così requestPort mostra il dialog
-    console.log('[Arduino] porta chiusa — premi A per riconnettere');
-  }
-}
-
 function startAutoplay() {
   autoplayActive = true;
 
@@ -1091,12 +1042,6 @@ function setupControls() {
     });
 
     window.addEventListener('keydown', (e) => {
-      // Tasto A durante intro → connetti Arduino
-      if (e.code === 'KeyA' && gameState === 'intro') {
-        connectArduino();
-        return;
-      }
-
       // Blocca gli input del gioco se in pausa
       if (gameState !== 'playing') {
         // Previeni anche la gestione dei tasti di movimento
