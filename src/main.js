@@ -7,7 +7,7 @@ const isMobile = /Android|iPhone|iPad|iPod|Touch/i.test(navigator.userAgent)
 
 let camera, scene, renderer, controls;
 const move = { forward: false, back: false, left: false, right: false };
-const speed = 2;
+const speed = 1.4;
 const clock = new THREE.Clock();
 let velocity = new THREE.Vector3();
 
@@ -123,7 +123,7 @@ const TARGET_FOG_DENSITY  = 0.1;
 // ─────────────────────────────────────────────────────────────
 // AUTOPLAY
 // ─────────────────────────────────────────────────────────────
-const AUTOPLAY_WALK_SPEED   = 2;
+const AUTOPLAY_WALK_SPEED   = 1.4;
 const AUTOPLAY_TURN_SECONDS = 2.6;
 
 // ── Reading ───────────────────────────────────────────────────
@@ -353,7 +353,6 @@ function stopAutoplay() {
   move.forward = move.back = move.left = move.right = false;
   if (footstepAudio && !footstepAudio.paused) {
     footstepAudio.pause();
-    footstepAudio.currentTime = 0;
   }
 }
 
@@ -444,7 +443,7 @@ function updateAutoplay(delta) {
       apTimer      = 0;
       apWalkedDist = 0;
       if (footstepAudio && !footstepAudio.paused) {
-        footstepAudio.pause(); footstepAudio.currentTime = 0;
+        footstepAudio.pause();
       }
     } else {
       camObj.position.copy(newPos);
@@ -494,7 +493,7 @@ function updateAutoplay(delta) {
         apTimer     = 0;
 
         if (footstepAudio && !footstepAudio.paused) {
-          footstepAudio.pause(); footstepAudio.currentTime = 0;
+          footstepAudio.pause();
         }
         return;
       }
@@ -513,7 +512,7 @@ function updateAutoplay(delta) {
           apWalkDist = distToNextIntersection(camObj.position, apDirIdx);
         }
         if (footstepAudio && !footstepAudio.paused) {
-          footstepAudio.pause(); footstepAudio.currentTime = 0;
+          footstepAudio.pause();
         }
       }
     }
@@ -814,7 +813,7 @@ function setupScene() {
 function setupFootstepAudio() {
   footstepAudio = new Audio('walks.mp3');
   footstepAudio.loop = true;
-  footstepAudio.volume = 0.625;
+  footstepAudio.volume = 0.46875;
 }
 
 function startGameDirectly() {
@@ -1319,7 +1318,7 @@ function animate() {
       if (footstepAudio && footstepAudio.paused) footstepAudio.play();
     } else {
       if (footstepAudio && !footstepAudio.paused) {
-        footstepAudio.pause(); footstepAudio.currentTime = 0;
+        footstepAudio.pause();
       }
     }
   }
