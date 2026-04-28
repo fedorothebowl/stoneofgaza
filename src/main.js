@@ -832,7 +832,13 @@ const micHooks = {
   // premuto per liberare il pointer e interagire con il pannello), riprendi.
   onPanelClose: () => {
     if (!isMobile && gameState === 'paused' && controls) {
-      try { controls.lock(); } catch (_) {}
+      // Chrome blocca pointerLock per ~1.25s dopo Esc. Ritenta a intervalli.
+      const tryLock = (attempts) => {
+        if (gameState !== 'paused' || attempts <= 0) return;
+        try { controls.lock(); } catch (_) {}
+        if (gameState === 'paused') setTimeout(() => tryLock(attempts - 1), 300);
+      };
+      tryLock(8);
     }
   },
 };

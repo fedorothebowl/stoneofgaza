@@ -17,7 +17,7 @@ function writeCookie(key, value) {
 
 export function getMicEnabled() {
   const v = readCookie(COOKIE_ENABLED);
-  if (v === null) return true;
+  if (v === null) return false;
   return v === '1';
 }
 
@@ -30,7 +30,7 @@ const state = {
   running: false,
   calibrated: false,
   level: 0,
-  baseline: 0.02,
+  baseline: 0,
   thNoise: 0.04,
   thSilence: 0.03,
   thNoiseOverride: null,
@@ -78,12 +78,16 @@ let _stream = null;
 let _ctx = null;
 
 let _calibRequest = null; // { startAt, max, sum, n, done }
+let _noiseSince = 0;
+let _silenceSince = 0;
+let _resetCounters = false;
 
 export function calibrate(durationMs = 2000) {
   if (!state.running) return Promise.reject(new Error('mic non attivo'));
+  const PRE_DELAY_MS = 400; // salta il click del mouse sul bottone Calibra
   return new Promise((resolve) => {
     _calibRequest = {
-      startAt: performance.now(),
+      startAt: performance.now() + PRE_DELAY_MS,
       duration: durationMs,
       max: 0,
       sum: 0,
@@ -93,9 +97,9 @@ export function calibrate(durationMs = 2000) {
   });
 }
 
-export async function startMicTrigger(hooks) {
+export async function startMicTrigger(hooks, { force = false } = {}) {
   if (state.running) return;
-  if (!getMicEnabled()) return;
+  if (!force && !getMicEnabled()) return;
   state.running = true;
   _stopRequested = false;
 
@@ -130,9 +134,9 @@ export async function startMicTrigger(hooks) {
 
   const buf = new Float32Array(analyser.fftSize);
 
-  let noiseSince = 0;
-  let silenceSince = 0;
-  const NOISE_HOLD_MS = 150;
+  _noiseSince = 0;
+  _silenceSince = 0;
+  const NOISE_HOLD_MS = 100;
   const SILENCE_HOLD_MS = 1500;
 
   function rms() {
@@ -165,6 +169,10 @@ export async function startMicTrigger(hooks) {
 
     // Calibrazione su richiesta (non più automatica all'avvio)
     if (_calibRequest) {
+      // Ignora i campioni prima dello startAt (pre-delay per saltare il click)
+      if (now < _calibRequest.startAt) {
+        // skip
+      } else {
       if (lvl > _calibRequest.max) _calibRequest.max = lvl;
       _calibRequest.sum += lvl; _calibRequest.n++;
       if (now - _calibRequest.startAt >= _calibRequest.duration) {
@@ -178,25 +186,32 @@ export async function startMicTrigger(hooks) {
         _calibRequest.resolve(res);
         _calibRequest = null;
       }
+      }
     }
 
+    if (_resetCounters) {
+      _noiseSince = 0;
+      _silenceSince = 0;
+      _resetCounters = false;
+    }
+    const triggerOn = getMicEnabled();
     if (lvl > state.thNoise) {
-      silenceSince = 0;
-      if (!noiseSince) noiseSince = now;
-      if (now - noiseSince >= NOISE_HOLD_MS) {
-        if (hooks.shouldStop && hooks.shouldStop()) hooks.onStop && hooks.onStop();
-        noiseSince = now;
+      _silenceSince = 0;
+      if (!_noiseSince) _noiseSince = now;
+      if (now - _noiseSince >= NOISE_HOLD_MS) {
+        if (triggerOn && hooks.shouldStop && hooks.shouldStop()) hooks.onStop && hooks.onStop();
+        _noiseSince = now;
       }
     } else if (lvl < state.thSilence) {
-      noiseSince = 0;
-      if (!silenceSince) silenceSince = now;
-      if (now - silenceSince >= SILENCE_HOLD_MS) {
-        if (hooks.shouldStart && hooks.shouldStart()) hooks.onStart && hooks.onStart();
-        silenceSince = now;
+      _noiseSince = 0;
+      if (!_silenceSince) _silenceSince = now;
+      if (now - _silenceSince >= SILENCE_HOLD_MS) {
+        if (triggerOn && hooks.shouldStart && hooks.shouldStart()) hooks.onStart && hooks.onStart();
+        _silenceSince = now;
       }
     } else {
-      noiseSince = 0;
-      silenceSince = 0;
+      _noiseSince = 0;
+      _silenceSince = 0;
     }
 
     requestAnimationFrame(tick);
@@ -212,8 +227,12 @@ export function stopMicTrigger() {
 
 export function setMicEnabled(enabled, hooks) {
   setMicEnabledCookie(enabled);
-  if (enabled) startMicTrigger(hooks);
-  else stopMicTrigger();
+  if (enabled) {
+    _resetCounters = true; // tick parte da contatori puliti
+    if (!state.running) startMicTrigger(hooks);
+  }
+  // Quando si disattiva il trigger non fermiamo lo stream se sta girando per
+  // il monitor del popup; la chiusura del popup si occuperà di stopparlo.
 }
 
 // ── UI: popup di configurazione (Ctrl+K) ──────────────────────────────
@@ -255,23 +274,9 @@ export function installMicSettingsUI(hooks) {
         </div>
       </div>
 
-      <div class="grid grid-cols-2 gap-2">
-        <label class="space-y-1">
-          <span class="block text-stone-400">Soglia rumore (stop)</span>
-          <input id="mic-th-noise" type="number" step="0.001" min="0" class="w-full bg-black/60 border border-white/20 rounded px-2 py-1 text-stone-200">
-        </label>
-        <label class="space-y-1">
-          <span class="block text-stone-400">Soglia silenzio (start)</span>
-          <input id="mic-th-silence" type="number" step="0.001" min="0" class="w-full bg-black/60 border border-white/20 rounded px-2 py-1 text-stone-200">
-        </label>
-      </div>
-
       <div class="flex items-center justify-between gap-2">
         <span class="text-stone-500">Baseline: <span id="mic-baseline">—</span></span>
-        <div class="flex gap-2">
-          <button id="mic-calibrate" class="px-2 py-1 border border-white/20 rounded hover:bg-white hover:text-black transition-colors cursor-pointer">Calibra (2s)</button>
-          <button id="mic-reset" class="px-2 py-1 border border-white/20 rounded hover:bg-white hover:text-black transition-colors cursor-pointer">Reset da baseline</button>
-        </div>
+        <button id="mic-calibrate" class="px-2 py-1 border border-white/20 rounded hover:bg-white hover:text-black transition-colors cursor-pointer">Calibra (2s)</button>
       </div>
 
       <p class="text-stone-500">Ctrl+K per aprire/chiudere</p>
@@ -283,11 +288,8 @@ export function installMicSettingsUI(hooks) {
   const toggle = panel.querySelector('#mic-toggle');
   const canvas = panel.querySelector('#mic-graph');
   const ctx2d = canvas.getContext('2d');
-  const inputNoise = panel.querySelector('#mic-th-noise');
-  const inputSilence = panel.querySelector('#mic-th-silence');
   const baselineEl = panel.querySelector('#mic-baseline');
   const statusEl = panel.querySelector('#mic-status');
-  const resetBtn = panel.querySelector('#mic-reset');
   const calibBtn = panel.querySelector('#mic-calibrate');
 
   // Storico del livello (~10s a 60fps)
@@ -297,8 +299,6 @@ export function installMicSettingsUI(hooks) {
   let rafId = null;
 
   function fillInputs() {
-    inputNoise.value = state.thNoise.toFixed(4);
-    inputSilence.value = state.thSilence.toFixed(4);
     baselineEl.textContent = state.calibrated ? state.baseline.toFixed(4) : 'non calibrato';
     statusEl.textContent = state.running
       ? (state.calibrated ? state.level.toFixed(4) : 'calibrazione…')
@@ -379,10 +379,18 @@ export function installMicSettingsUI(hooks) {
     panel.style.display = 'grid';
     fillInputs();
     if (rafId === null) loop();
+    // Avvia il mic per il monitor (richiede il permesso al browser).
+    if (!state.running) {
+      startMicTrigger(hooks, { force: true });
+    }
   }
   function close() {
     panel.style.display = 'none';
     if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+    // Se il trigger è disabilitato, ferma lo stream del mic alla chiusura.
+    if (!getMicEnabled() && state.running) {
+      stopMicTrigger();
+    }
     if (hooks.onPanelClose) {
       try { hooks.onPanelClose(); } catch (_) {}
     }
@@ -396,33 +404,13 @@ export function installMicSettingsUI(hooks) {
     setMicEnabled(toggle.checked, hooks);
   });
 
-  inputNoise.addEventListener('change', () => {
-    const v = parseFloat(inputNoise.value);
-    if (Number.isFinite(v) && v > 0) setThresholds({ thNoise: v });
-  });
-  inputSilence.addEventListener('change', () => {
-    const v = parseFloat(inputSilence.value);
-    if (Number.isFinite(v) && v > 0) setThresholds({ thSilence: v });
-  });
-
-  resetBtn.addEventListener('click', () => {
-    resetThresholds();
-    fillInputs();
-  });
-
   calibBtn.addEventListener('click', async () => {
     const original = calibBtn.textContent;
     calibBtn.disabled = true;
     try {
-      // Se il mic è abilitato ma non ancora attivo (es. popup aperto prima di
-      // entrare nel gioco, o stream non partito), avvialo qui.
       if (!state.running) {
-        if (!getMicEnabled()) {
-          setMicEnabledCookie(true);
-          toggle.checked = true;
-        }
         calibBtn.textContent = 'Avvio mic…';
-        await startMicTrigger(hooks);
+        await startMicTrigger(hooks, { force: true });
       }
       if (!state.running) {
         statusEl.textContent = 'mic non disponibile';
