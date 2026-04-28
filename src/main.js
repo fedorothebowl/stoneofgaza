@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
+import { startMicTrigger, installMicSettingsUI } from './micTrigger.js';
 
 // ── Rilevamento mobile ────────────────────────────────────────────────────────
 const isMobile = /Android|iPhone|iPad|iPod|Touch/i.test(navigator.userAgent)
@@ -49,7 +50,7 @@ let footstepAudio;
 
 // Smuta la musica di sottofondo al primo gesto dell'utente (policy autoplay browser)
 function _unmuteBgOnce() {
-  if (bgAudio) { bgAudio.volume = 0.5; bgAudio.muted = false; bgAudio.play(); }
+  if (bgAudio) { bgAudio.volume = 0.5; bgAudio.muted = false; bgAudio.play().catch(() => {}); }
   document.removeEventListener('click',      _unmuteBgOnce);
   document.removeEventListener('touchstart',  _unmuteBgOnce);
   document.removeEventListener('keydown',     _unmuteBgOnce);
@@ -603,13 +604,16 @@ init();
 
 async function init() {
   try {
-    const summaryRes = await fetch('https://data.techforpalestine.org/api/v3/summary.json');
+    const API_BASE = import.meta.env.DEV
+      ? '/tfp/api/v3'
+      : 'https://data.techforpalestine.org/api/v3';
+    const summaryRes = await fetch(`${API_BASE}/summary.json`);
     const summary = await summaryRes.json();
     TOTAL_COUNT = summary.gaza.killed.total;
 
     setupScene();
 
-    const namesRes = await fetch('https://data.techforpalestine.org/api/v3/killed-in-gaza.min.json');
+    const namesRes = await fetch(`${API_BASE}/killed-in-gaza.min.json`);
     const rawData = await namesRes.json();
     const rows = rawData.slice(1);
 
@@ -816,6 +820,30 @@ function setupFootstepAudio() {
   footstepAudio.volume = 0.35;
 }
 
+// ── Mic trigger autoplay ────────────────────────────────────────────────
+// Logica spostata in ./micTrigger.js. Qui definiamo solo gli hook e
+// l'entry point richiamato all'avvio del gioco.
+const micHooks = {
+  shouldStop: () => autoplayActive && !_stopAfterSnap && gameState === 'playing',
+  shouldStart: () => !autoplayActive && !dropping && gameState === 'playing',
+  onStop: () => stopAutoplay(),
+  onStart: () => startAutoplay(),
+  // Chiusura del popup Ctrl+K: se il gioco è in pausa (perché Esc è stato
+  // premuto per liberare il pointer e interagire con il pannello), riprendi.
+  onPanelClose: () => {
+    if (!isMobile && gameState === 'paused' && controls) {
+      try { controls.lock(); } catch (_) {}
+    }
+  },
+};
+
+function setupMicTrigger() {
+  return startMicTrigger(micHooks);
+}
+
+if (typeof window !== 'undefined') window.setupMicTrigger = setupMicTrigger;
+installMicSettingsUI(micHooks);
+
 function startGameDirectly() {
   const instructions = document.getElementById('instructions');
   instructions.style.display = 'none';
@@ -824,8 +852,9 @@ function startGameDirectly() {
   gameState         = 'playing';
   dropping          = true;
 
-  if (bgAudio) { bgAudio.volume = 0.5; bgAudio.muted = false; bgAudio.play(); }
+  if (bgAudio) { bgAudio.volume = 0.5; bgAudio.muted = false; bgAudio.play().catch(() => {}); }
   setupFootstepAudio();
+  setupMicTrigger();
 
   if (isMobile) {
     setTimeout(() => startAutoplay(), 300);
@@ -989,7 +1018,8 @@ function setupControls() {
       }
       pauseScreen.classList.add('hidden');
       gameState = 'playing';
-      if (bgAudio) { bgAudio.volume = 0.5; bgAudio.muted = false; bgAudio.play(); }
+      if (bgAudio) { bgAudio.volume = 0.5; bgAudio.muted = false; bgAudio.play().catch(() => {}); }
+      setupMicTrigger();
     });
 
     // ── FIX ESC/pausa ────────────────────────────────────────────────
@@ -1030,6 +1060,7 @@ function setupControls() {
     document.getElementById("start").addEventListener('click', () => {
       if (gameState === 'intro') {
         setupFootstepAudio();
+        setupMicTrigger();
         controls.lock();
       }
     });
@@ -1096,7 +1127,7 @@ function setupControls() {
       if (gameState === 'paused') {
         pauseScreen.classList.add('hidden');
         gameState = 'playing';
-        if (bgAudio) bgAudio.play();
+        if (bgAudio) bgAudio.play().catch(() => {});
         if (!autoplayActive) startAutoplay();
       }
     });
