@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
-import { startMicTrigger, installMicSettingsUI } from './micTrigger.js';
 
 // ── Rilevamento mobile ────────────────────────────────────────────────────────
 const isMobile = /Android|iPhone|iPad|iPod|Touch/i.test(navigator.userAgent)
@@ -8,7 +7,7 @@ const isMobile = /Android|iPhone|iPad|iPod|Touch/i.test(navigator.userAgent)
 
 let camera, scene, renderer, controls;
 const move = { forward: false, back: false, left: false, right: false };
-const speed = 1.4;
+const speed = 1.2;
 const clock = new THREE.Clock();
 let velocity = new THREE.Vector3();
 
@@ -124,13 +123,13 @@ const TARGET_FOG_DENSITY  = 0.1;
 // ─────────────────────────────────────────────────────────────
 // AUTOPLAY
 // ─────────────────────────────────────────────────────────────
-const AUTOPLAY_WALK_SPEED   = 1.4;
+const AUTOPLAY_WALK_SPEED   = 1.2;
 const AUTOPLAY_TURN_SECONDS = 2.6;
 
 // ── Reading ───────────────────────────────────────────────────
 const READING_TURN_SECS      = 1.5; // durata rotazione verso/da il pilastro
 const READING_PITCH          = 0.28; // angolo di inclinazione testa (radianti)
-const READING_TILT_SECS      = 1.4; // durata ease-in-out tilt su/giù
+const READING_TILT_SECS      = 1.15; // durata ease-in-out tilt su/giù
 const READING_PAUSE_SECS     = 2; // pausa minima mentre si guarda il nome
 const READING_PAUSE_DOWN_SECS = 0; // pausa dopo che la testa è tornata giù
 
@@ -206,23 +205,6 @@ function nearestCorridorCenter(pos, dirIdx) {
   const normalized = v + apGridHalfSize;
   const cell = Math.round(normalized / SPACING - 0.5);
   return (cell + 0.5) * SPACING - apGridHalfSize;
-}
-
-// Snap alla riga di pilastri più vicina lungo l'asse di cammino.
-// Usato prima di entrare in lettura per centrare la camera
-// esattamente di fronte a un pilastro, eliminando l'overshoot
-// del passo discreto (specialmente con DEV_SPEED_MULT > 1).
-function snapToPillarRow(camObj, dirIdx) {
-  const dir = AP_DIRS[dirIdx];
-  if (dir.z !== 0) {
-    // cammino in Z → snap della Z alla riga pilastri
-    const raw = camObj.position.z + apGridHalfSize;
-    camObj.position.z = Math.round(raw / SPACING) * SPACING - apGridHalfSize;
-  } else {
-    // cammino in X → snap della X alla colonna pilastri
-    const raw = camObj.position.x + apGridHalfSize;
-    camObj.position.x = Math.round(raw / SPACING) * SPACING - apGridHalfSize;
-  }
 }
 
 const AP_DIRS = [
@@ -308,6 +290,10 @@ function startAutoplay() {
   autoplayActive = true;
 
   if (controls) controls.disconnect();
+
+  if (footstepAudio && footstepAudio.paused) {
+    footstepAudio.play().catch(() => {});
+  }
 
   // Azzera il roll residuo
   _pitchEuler.setFromQuaternion(camera.quaternion, 'YXZ');
@@ -469,12 +455,12 @@ function updateAutoplay(delta) {
 
       if (apReadWalkDist >= apReadWalkTarget) {
         apReadWalkDist   = 0;
-        apReadWalkTarget = (3 + Math.floor(Math.random() * 3)) * SPACING;
-
-        // ── Centering fix: snap alla riga/colonna di pilastri esatta
-        //    prima di girare a guardarlo. Elimina l'overshoot del passo
-        //    discreto (più evidente con DEV_SPEED_MULT > 1).
-        snapToPillarRow(camObj, apDirIdx);
+        // Target = prossima riga di pilastri + N spacing extra:
+        // così il termine del cammino cade naturalmente su una riga
+        // (modulo l'overshoot di un singolo frame, < pochi cm), senza
+        // bisogno di uno snap discreto che produce uno scatto visibile.
+        apReadWalkTarget = distToNextPillar(camObj.position, apDirIdx)
+          + (2 + Math.floor(Math.random() * 3)) * SPACING;
 
         // Scegli la facciata illuminata dal sole:
         // la faccia che guarda il giocatore ha normale = -AP_DIRS[sideDirIdx]
@@ -509,11 +495,11 @@ function updateAutoplay(delta) {
           apTimer        = 0;
           apIntersCount  = 0;
           apIntersTarget = 5 + Math.floor(Math.random() * 6);
+          if (footstepAudio && !footstepAudio.paused) {
+            footstepAudio.pause();
+          }
         } else {
           apWalkDist = distToNextIntersection(camObj.position, apDirIdx);
-        }
-        if (footstepAudio && !footstepAudio.paused) {
-          footstepAudio.pause();
         }
       }
     }
@@ -817,58 +803,8 @@ function setupScene() {
 function setupFootstepAudio() {
   footstepAudio = new Audio('walks.mp3');
   footstepAudio.loop = true;
-  footstepAudio.volume = 1.0;
+  footstepAudio.volume = 0.015;
 }
-
-// ── Mic trigger autoplay ────────────────────────────────────────────────
-// Logica spostata in ./micTrigger.js. Qui definiamo solo gli hook e
-// l'entry point richiamato all'avvio del gioco.
-let _noiseWarningTimer = null;
-function showNoiseWarning() {
-  const el = document.getElementById('noise-warning');
-  if (!el) return;
-  el.style.opacity = '1';
-  if (_noiseWarningTimer) clearTimeout(_noiseWarningTimer);
-  _noiseWarningTimer = setTimeout(() => {
-    el.style.opacity = '0';
-    _noiseWarningTimer = null;
-  }, 2000);
-}
-
-const micHooks = {
-  shouldStop: () => autoplayActive && !_stopAfterSnap && gameState === 'playing',
-  shouldStart: () => !autoplayActive && !dropping && gameState === 'playing',
-  onStop: () => stopAutoplay(),
-  onStart: () => startAutoplay(),
-  onNoise: () => showNoiseWarning(),
-  // Apertura del popup Ctrl+K: assicura che il drone di sottofondo stia suonando
-  // (Esc, che si preme per interagire col pannello, mette in pausa bgAudio).
-  onPanelOpen: () => {
-    if (bgAudio) { bgAudio.muted = false; bgAudio.play().catch(() => {}); }
-  },
-  // Chiusura del popup Ctrl+K: se il gioco è in pausa (perché Esc è stato
-  // premuto per liberare il pointer e interagire con il pannello), riprendi.
-  onPanelClose: () => {
-    if (isMobile || !controls) return;
-    // Riacquisisci il pointer lock se non lo abbiamo più (sia se siamo
-    // in 'playing' col cursore liberato dall'apertura del pannello, sia
-    // se siamo finiti in 'paused' per qualche altro motivo).
-    if (document.pointerLockElement) return;
-    const tryLock = (attempts) => {
-      if (attempts <= 0 || document.pointerLockElement) return;
-      try { controls.lock(); } catch (_) {}
-      setTimeout(() => tryLock(attempts - 1), 300);
-    };
-    tryLock(8);
-  },
-};
-
-function setupMicTrigger() {
-  return startMicTrigger(micHooks);
-}
-
-if (typeof window !== 'undefined') window.setupMicTrigger = setupMicTrigger;
-installMicSettingsUI(micHooks);
 
 function startGameDirectly() {
   const instructions = document.getElementById('instructions');
@@ -880,7 +816,6 @@ function startGameDirectly() {
 
   if (bgAudio) { bgAudio.volume = 0.5; bgAudio.muted = false; bgAudio.play().catch(() => {}); }
   setupFootstepAudio();
-  setupMicTrigger();
 
   if (isMobile) {
     setTimeout(() => startAutoplay(), 300);
@@ -1045,19 +980,12 @@ function setupControls() {
       pauseScreen.classList.add('hidden');
       gameState = 'playing';
       if (bgAudio) { bgAudio.volume = 0.5; bgAudio.muted = false; bgAudio.play().catch(() => {}); }
-      setupMicTrigger();
     });
 
     // ── FIX ESC/pausa ────────────────────────────────────────────────
     document.addEventListener('pointerlockchange', () => {
       if (document.pointerLockElement) return; // lock acquisito, non rilasciato
       if (gameState !== 'playing') return;
-
-      // Se il pointer lock viene rilasciato perché si è aperto il pannello mic
-      // (Ctrl+K), non mostrare la schermata di pausa né stoppare il drone:
-      // l'utente sta solo configurando il mic, non vuole uscire dal gioco.
-      const micPanel = document.getElementById('mic-settings-panel');
-      if (micPanel && micPanel.style.display !== 'none') return;
 
       if (autoplayActive) {
         // Finalizza subito senza aspettare l'animazione di snap:
@@ -1092,7 +1020,6 @@ function setupControls() {
     document.getElementById("start").addEventListener('click', () => {
       if (gameState === 'intro') {
         setupFootstepAudio();
-        setupMicTrigger();
         controls.lock();
       }
     });

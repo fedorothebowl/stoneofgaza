@@ -43,18 +43,13 @@
         </div>
       </div>
 
-      <!-- Avviso "silenzio" quando il mic rileva rumore -->
-      <div id="noise-warning" class="fixed top-6 left-1/2 -translate-x-1/2 z-[150] bg-black/70 border border-white/20 rounded-md px-4 py-2 text-sm text-stone-200 pointer-events-none transition-opacity duration-300 opacity-0">
-        Per favore, restate in silenzio per non interrompere l'esperienza.
-      </div>
-
       <!-- Popup pausa -->
       <div class="w-screen h-screen fixed inset-0 z-100 grid place-items-center hidden" id="pause-screen">
         <div class="bg-black/50 w-[90%] md:max-w-md max-w-max m-auto h-max text-xs p-4 rounded-md space-y-2.5">
           <p class="text-sm font-bold">Paused</p>
           <p>The memorial waits in silence.</p>
           <div class="flex justify-between items-center">
-            <span>WASD or ↑↓←→ to move <br> F to toggle autoplay <br> ESC to pause</span>
+            <span>WASD or ↑↓←→ to move <br> F to toggle autoplay </span>
             <button id="resume" class="bg-white rounded-md px-2 py-1 text-black font-bold cursor-pointer hover:bg-transparent hover:text-white border border-white">Resume</button>
           </div>
         </div>
