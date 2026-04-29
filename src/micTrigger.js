@@ -120,7 +120,7 @@ export async function startMicTrigger(hooks, { force = false } = {}) {
 
   try {
     _stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false }
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
     });
     console.log('[mic] stream ottenuto');
   } catch (e) {
