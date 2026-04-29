@@ -68,8 +68,10 @@ export function resetThresholds() {
   document.cookie = `${COOKIE_TH_NOISE}=;path=/;max-age=0`;
   document.cookie = `${COOKIE_TH_SILENCE}=;path=/;max-age=0`;
   if (state.calibrated) {
-    state.thNoise = state.baseline * 1.8 + 0.015;
-    state.thSilence = state.baseline * 1.3 + 0.005;
+    // thNoise/thSilence sono il livello "drone" + un delta fisso di rumore extra:
+    // così la sensibilità non scala col volume del drone.
+    state.thNoise = state.baseline + 0.025;
+    state.thSilence = state.baseline + 0.005;
   }
 }
 
@@ -86,8 +88,13 @@ export function calibrate(durationMs = 2000) {
   if (!state.running) return Promise.reject(new Error('mic non attivo'));
   const PRE_DELAY_MS = 400; // salta il click del mouse sul bottone Calibra
   return new Promise((resolve) => {
+    // startAt viene fissato dal primo tick che vede la richiesta:
+    // se startMicTrigger è ancora dentro getUserMedia (permesso del
+    // browser pendente), state.running è già true ma tick non gira
+    // ancora — un timestamp assoluto qui scadrebbe prima del primo frame.
     _calibRequest = {
-      startAt: performance.now() + PRE_DELAY_MS,
+      startAt: null,
+      preDelay: PRE_DELAY_MS,
       duration: durationMs,
       max: 0,
       sum: 0,
@@ -136,7 +143,7 @@ export async function startMicTrigger(hooks, { force = false } = {}) {
 
   _noiseSince = 0;
   _silenceSince = 0;
-  const NOISE_HOLD_MS = 100;
+  const NOISE_HOLD_MS = 0;
   const SILENCE_HOLD_MS = 1500;
 
   function rms() {
@@ -169,6 +176,11 @@ export async function startMicTrigger(hooks, { force = false } = {}) {
 
     // Calibrazione su richiesta (non più automatica all'avvio)
     if (_calibRequest) {
+      // Fissa startAt al primo frame in cui il tick vede la richiesta,
+      // così il pre-delay è relativo al primo sample reale (non al click).
+      if (_calibRequest.startAt === null) {
+        _calibRequest.startAt = now + _calibRequest.preDelay;
+      }
       // Ignora i campioni prima dello startAt (pre-delay per saltare il click)
       if (now < _calibRequest.startAt) {
         // skip
@@ -178,8 +190,8 @@ export async function startMicTrigger(hooks, { force = false } = {}) {
       if (now - _calibRequest.startAt >= _calibRequest.duration) {
         const avg = _calibRequest.sum / Math.max(1, _calibRequest.n);
         state.baseline = Math.max(_calibRequest.max, avg * 1.5, 0.01);
-        if (state.thNoiseOverride === null) state.thNoise = state.baseline * 1.8 + 0.015;
-        if (state.thSilenceOverride === null) state.thSilence = state.baseline * 1.3 + 0.005;
+        if (state.thNoiseOverride === null) state.thNoise = state.baseline + 0.025;
+        if (state.thSilenceOverride === null) state.thSilence = state.baseline + 0.005;
         state.calibrated = true;
         console.log('[mic] calibrato. baseline=', state.baseline.toFixed(4), 'thNoise=', state.thNoise.toFixed(4), 'thSilence=', state.thSilence.toFixed(4));
         const res = { baseline: state.baseline, thNoise: state.thNoise, thSilence: state.thSilence };
@@ -199,7 +211,10 @@ export async function startMicTrigger(hooks, { force = false } = {}) {
       _silenceSince = 0;
       if (!_noiseSince) _noiseSince = now;
       if (now - _noiseSince >= NOISE_HOLD_MS) {
-        if (triggerOn && hooks.shouldStop && hooks.shouldStop()) hooks.onStop && hooks.onStop();
+        if (triggerOn) {
+          if (hooks.onNoise) hooks.onNoise();
+          if (hooks.shouldStop && hooks.shouldStop()) hooks.onStop && hooks.onStop();
+        }
         _noiseSince = now;
       }
     } else if (lvl < state.thSilence) {
@@ -374,6 +389,10 @@ export function installMicSettingsUI(hooks) {
   }
 
   function open() {
+    // Rilascia il pointer lock così il cursore è visibile e si può cliccare il pannello.
+    if (document.pointerLockElement) {
+      try { document.exitPointerLock(); } catch (_) {}
+    }
     toggle.checked = getMicEnabled();
     history.fill(0);
     panel.style.display = 'grid';
@@ -382,6 +401,9 @@ export function installMicSettingsUI(hooks) {
     // Avvia il mic per il monitor (richiede il permesso al browser).
     if (!state.running) {
       startMicTrigger(hooks, { force: true });
+    }
+    if (hooks.onPanelOpen) {
+      try { hooks.onPanelOpen(); } catch (_) {}
     }
   }
   function close() {

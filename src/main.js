@@ -817,29 +817,49 @@ function setupScene() {
 function setupFootstepAudio() {
   footstepAudio = new Audio('walks.mp3');
   footstepAudio.loop = true;
-  footstepAudio.volume = 0.35;
+  footstepAudio.volume = 1.0;
 }
 
 // ── Mic trigger autoplay ────────────────────────────────────────────────
 // Logica spostata in ./micTrigger.js. Qui definiamo solo gli hook e
 // l'entry point richiamato all'avvio del gioco.
+let _noiseWarningTimer = null;
+function showNoiseWarning() {
+  const el = document.getElementById('noise-warning');
+  if (!el) return;
+  el.style.opacity = '1';
+  if (_noiseWarningTimer) clearTimeout(_noiseWarningTimer);
+  _noiseWarningTimer = setTimeout(() => {
+    el.style.opacity = '0';
+    _noiseWarningTimer = null;
+  }, 2000);
+}
+
 const micHooks = {
   shouldStop: () => autoplayActive && !_stopAfterSnap && gameState === 'playing',
   shouldStart: () => !autoplayActive && !dropping && gameState === 'playing',
   onStop: () => stopAutoplay(),
   onStart: () => startAutoplay(),
+  onNoise: () => showNoiseWarning(),
+  // Apertura del popup Ctrl+K: assicura che il drone di sottofondo stia suonando
+  // (Esc, che si preme per interagire col pannello, mette in pausa bgAudio).
+  onPanelOpen: () => {
+    if (bgAudio) { bgAudio.muted = false; bgAudio.play().catch(() => {}); }
+  },
   // Chiusura del popup Ctrl+K: se il gioco è in pausa (perché Esc è stato
   // premuto per liberare il pointer e interagire con il pannello), riprendi.
   onPanelClose: () => {
-    if (!isMobile && gameState === 'paused' && controls) {
-      // Chrome blocca pointerLock per ~1.25s dopo Esc. Ritenta a intervalli.
-      const tryLock = (attempts) => {
-        if (gameState !== 'paused' || attempts <= 0) return;
-        try { controls.lock(); } catch (_) {}
-        if (gameState === 'paused') setTimeout(() => tryLock(attempts - 1), 300);
-      };
-      tryLock(8);
-    }
+    if (isMobile || !controls) return;
+    // Riacquisisci il pointer lock se non lo abbiamo più (sia se siamo
+    // in 'playing' col cursore liberato dall'apertura del pannello, sia
+    // se siamo finiti in 'paused' per qualche altro motivo).
+    if (document.pointerLockElement) return;
+    const tryLock = (attempts) => {
+      if (attempts <= 0 || document.pointerLockElement) return;
+      try { controls.lock(); } catch (_) {}
+      setTimeout(() => tryLock(attempts - 1), 300);
+    };
+    tryLock(8);
   },
 };
 
@@ -1032,6 +1052,12 @@ function setupControls() {
     document.addEventListener('pointerlockchange', () => {
       if (document.pointerLockElement) return; // lock acquisito, non rilasciato
       if (gameState !== 'playing') return;
+
+      // Se il pointer lock viene rilasciato perché si è aperto il pannello mic
+      // (Ctrl+K), non mostrare la schermata di pausa né stoppare il drone:
+      // l'utente sta solo configurando il mic, non vuole uscire dal gioco.
+      const micPanel = document.getElementById('mic-settings-panel');
+      if (micPanel && micPanel.style.display !== 'none') return;
 
       if (autoplayActive) {
         // Finalizza subito senza aspettare l'animazione di snap:
