@@ -803,7 +803,7 @@ function setupScene() {
 function setupFootstepAudio() {
   footstepAudio = new Audio('walks.mp3');
   footstepAudio.loop = true;
-  footstepAudio.volume = 0.015;
+  footstepAudio.volume = 0.15;
 }
 
 function startGameDirectly() {
