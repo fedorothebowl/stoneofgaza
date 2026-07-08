@@ -155,6 +155,58 @@ let apReadPhase      = '';
 let apTiltPitchStart = 0;
 let apReadYawBack = 0;
 
+const infoScreen = document.getElementById('info-screen');
+const closeInfoBtn = document.getElementById('close-info');
+const instructionsScreen = document.getElementById('instructions');
+const pauseScreenEl = document.getElementById('pause-screen');
+
+let infoOpen = false;
+let infoPrevious = null; // ricorda quale popup era visibile prima di aprire l'info
+
+function openInfo() {
+  if (infoOpen) return;
+  infoOpen = true;
+
+  // Nasconde il popup attualmente visibile (instructions o pausa) e lo ricorda
+  if (instructionsScreen && instructionsScreen.style.display !== 'none') {
+    infoPrevious = 'instructions';
+    instructionsScreen.style.display = 'none';
+  } else if (pauseScreenEl && !pauseScreenEl.classList.contains('hidden')) {
+    infoPrevious = 'pause';
+    pauseScreenEl.classList.add('hidden');
+  } else {
+    infoPrevious = null;
+  }
+
+  infoScreen.classList.remove('hidden');
+}
+
+function closeInfo() {
+  if (!infoOpen) return;
+  infoOpen = false;
+  infoScreen.classList.add('hidden');
+
+  // Ripristina il popup precedente, se ce n'era uno
+  if (infoPrevious === 'instructions' && instructionsScreen) {
+    instructionsScreen.style.display = '';
+  } else if (infoPrevious === 'pause' && pauseScreenEl) {
+    pauseScreenEl.classList.remove('hidden');
+  }
+  infoPrevious = null;
+}
+
+function toggleInfo() {
+  if (infoOpen) closeInfo();
+  else openInfo();
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key.toLowerCase() === 'i') {
+    toggleInfo();
+  }
+});
+
+closeInfoBtn.addEventListener('click', closeInfo);
 // ── Rotazione quaternion-safe con ordine YXZ ──────────────────
 // ─────────────────────────────────────────────────────────────
 // ROOT CAUSE del glitch "ubriaco":
