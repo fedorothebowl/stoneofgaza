@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { GYRO_INTERRUPT_RATE, GYRO_MAX_PITCH, GYRO_SMOOTHING } from './config.js';
+import { GYRO_MAX_PITCH, GYRO_SMOOTHING } from './config.js';
 import { getPitch, getYaw, setYawPitch, shortestYaw } from './angles.js';
 
 const DEG = Math.PI / 180;
@@ -20,13 +20,9 @@ function screenAngle() {
 // controllo), il pitch è assoluto: telefono verticale = orizzonte.
 export class Gyro {
   #ready = false;       // è arrivata almeno una lettura
-  #moved = false;       // rotazione decisa dall'ultima consumeMoved()
   #yaw = 0;
   #pitch = 0;
   #yawOffset = 0;
-  #rate = 0;            // velocità angolare smussata (gradi/s)
-  #last = new THREE.Quaternion();
-  #lastTime = 0;
 
   get ready() {
     return this.#ready;
@@ -58,28 +54,12 @@ export class Gyro {
       .multiply(_backOfDevice)
       .multiply(_screen.setFromAxisAngle(_zAxis, -screenAngle()));
 
-    if (this.#ready) {
-      const dt = (e.timeStamp - this.#lastTime) / 1000;
-      if (dt > 0) {
-        this.#rate = this.#rate * 0.8 + (this.#last.angleTo(_quat) / DEG / dt) * 0.2;
-        if (this.#rate >= GYRO_INTERRUPT_RATE) this.#moved = true;
-      }
-    }
-    this.#last.copy(_quat);
-    this.#lastTime = e.timeStamp;
-
     _euler.setFromQuaternion(_quat, 'YXZ');
     this.#yaw   = _euler.y;
     this.#pitch = THREE.MathUtils.clamp(_euler.x, -GYRO_MAX_PITCH, GYRO_MAX_PITCH);
     this.#ready = true;
   };
 
-  // true se dall'ultima chiamata il telefono è stato ruotato con decisione
-  consumeMoved() {
-    const moved = this.#moved;
-    this.#moved = false;
-    return moved;
-  }
 
   // Aggancia lo yaw del sensore a quello attuale della camera: nessuno scatto
   // quando il giroscopio riprende il controllo dopo l'autoplay.

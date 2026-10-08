@@ -281,6 +281,7 @@ export class Experience {
 
     if (this.#state === 'playing') {
       if (this.#startTime) this.#environment.adapt(performance.now() / 1000 - this.#startTime);
+      autoplay.freeLook = isMobile && this.#gyro.ready;
       autoplay.update(delta);
     }
 
@@ -293,7 +294,7 @@ export class Experience {
     }
 
     const manual = this.#active && !this.#dropping && !autoplay.active;
-    if (isMobile) this.#updateGyro(manual, delta);
+    if (isMobile) this.#updateGyro(delta);
 
     if (manual) {
       this.#updateManualWalk(delta);
@@ -320,13 +321,11 @@ export class Experience {
     this.#renderer.render(this.#scene, camera);
   };
 
-  // Su mobile il giroscopio guida lo sguardo quando non c'è l'autoplay; una
-  // rotazione decisa del telefono lo interrompe, come il mouse su desktop.
-  #updateGyro(manual, delta) {
+  // Su mobile il giroscopio guida lo sguardo sia camminando a mano sia in autoplay
+  #updateGyro(delta) {
     const gyro = this.#gyro;
-    if (gyro.consumeMoved() && this.#state === 'playing') this.#stopAutoplay();
 
-    if (!manual || !gyro.ready) {
+    if (!this.#active || this.#dropping || !gyro.ready) {
       this.#gyroEngaged = false;
       return;
     }
@@ -338,7 +337,7 @@ export class Experience {
     gyro.applyTo(this.#camera, delta);
   }
 
-  // Dopo AUTOPLAY_IDLE_SECS senza input (movimento, mouse o giroscopio) parte l'autoplay
+  // Dopo AUTOPLAY_IDLE_SECS senza input (movimento o mouse) parte l'autoplay
   #updateIdle(delta) {
     const move = this.#move;
     if (move.forward || move.back || move.left || move.right) {

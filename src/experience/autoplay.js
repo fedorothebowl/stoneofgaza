@@ -21,6 +21,9 @@ const _sunDir = new THREE.Vector3();
 //   turning  → ruota verso la nuova direzione di marcia
 export class Autoplay {
   active = false;
+  // Su mobile con giroscopio lo sguardo resta al visitatore: l'autoplay muove
+  // solo la posizione, non scrive yaw e pitch e non si ferma a leggere i nomi.
+  freeLook = false;
 
   #camera; #controls; #colliders; #halfSize; #footsteps; #environment; #bob;
 
@@ -65,8 +68,8 @@ export class Autoplay {
     this.#controls.disconnect();
     this.#footsteps.play();
 
-    // Azzera il roll residuo
-    clearRoll(camera);
+    // Azzera il roll residuo (con freeLook l'orientamento è del giroscopio)
+    if (!this.freeLook) clearRoll(camera);
 
     // Parte nella direzione libera più vicina a dove si sta guardando
     const curYaw = getYaw(camera);
@@ -119,9 +122,9 @@ export class Autoplay {
     const camera = this.#camera;
 
     // Azzera il roll ogni frame (non deve mai accumularsi)
-    clearRoll(camera);
+    if (!this.freeLook) clearRoll(camera);
 
-    if (this.#state !== 'reading') {
+    if (this.#state !== 'reading' && !this.freeLook) {
       const pitch = getPitch(camera);
       if (Math.abs(pitch) > 0.001) {
         const t = 1.0 - Math.exp(-(this.#stopping ? 1.5 : 3.5) * DEV_SPEED_MULT * delta);
@@ -159,12 +162,13 @@ export class Autoplay {
   #animateYaw(duration) {
     const t = this.#progress(duration);
     const diff = wrapAngle(this.#yawTarget - this.#yawStart);
-    setYaw(this.#camera, this.#yawStart + diff * (t >= 1 ? 1 : easeInOutQuad(t)));
+    if (!this.freeLook) setYaw(this.#camera, this.#yawStart + diff * (t >= 1 ? 1 : easeInOutQuad(t)));
     return t >= 1;
   }
 
   // Avvicina lo yaw al target; rate = velocità di inseguimento
   #chaseYaw(rate, delta) {
+    if (this.freeLook) return;
     const diff = shortestYaw(getYaw(this.#camera), this.#yawTarget);
     if (Math.abs(diff) < 0.001) {
       setYaw(this.#camera, this.#yawTarget);
@@ -215,7 +219,8 @@ export class Autoplay {
         this.#state = 'walking';
       } else {
         const yawLeft = wrapAngle(this.#yawTarget - getYaw(camera));
-        if (Math.abs(yawLeft) < 0.01 && Math.abs(getPitch(camera)) < 0.01) this.abort();
+        const aligned = Math.abs(yawLeft) < 0.01 && Math.abs(getPitch(camera)) < 0.01;
+        if (this.freeLook || aligned) this.abort();
       }
     } else {
       camera.position[axis] += Math.sign(diff) * Math.min(Math.abs(diff), snapSpeed * delta);
@@ -244,7 +249,7 @@ export class Autoplay {
     this.#readWalkDist += step;
     this.#footsteps.play();
 
-    if (this.#readWalkDist >= this.#readWalkTarget) {
+    if (!this.freeLook && this.#readWalkDist >= this.#readWalkTarget) {
       this.#startReading();
     } else if (this.#walkedDist >= this.#walkDist) {
       this.#reachIntersection();
@@ -293,6 +298,13 @@ export class Autoplay {
   }
 
   #updateReading() {
+    // Il giroscopio è diventato disponibile a metà sosta: si riprende a camminare
+    if (this.freeLook) {
+      this.#walkDist = distToNextIntersection(this.#camera.position, this.#dir, this.#halfSize);
+      this.#enter('walking');
+      return;
+    }
+
     const camera = this.#camera;
 
     switch (this.#readPhase) {

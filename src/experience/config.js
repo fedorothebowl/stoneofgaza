@@ -100,4 +100,3 @@ export const API_TIMEOUT_SECS = 8;
 // ── Giroscopio (mobile) ───────────────────────────────────────
 export const GYRO_SMOOTHING      = 12;    // rapidità con cui la camera insegue il sensore
 export const GYRO_MAX_PITCH      = 1.4;   // limite su/giù dello sguardo (radianti)
-export const GYRO_INTERRUPT_RATE = 45;    // gradi/s: oltre questa soglia la rotazione interrompe l'autoplay
