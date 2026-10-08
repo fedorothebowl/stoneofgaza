@@ -1,7 +1,7 @@
 <script>
   import Popup from './Popup.svelte';
 
-  let { totalCount, snapshotDate = null, onstart } = $props();
+  let { totalCount, snapshotDate = null, onstart, oninfo } = $props();
 
   // UTC in lettura e in scrittura: il giorno non deve slittare col fuso del visitatore
   const asOf = $derived(snapshotDate
@@ -20,7 +20,7 @@
   </div>
 
   <div class="flex justify-between">
-    <span>WASD or ↑↓←→ to move <br> Press F to toggle autoplay <br> Press I to get info about this work<br> Press ESC to pause </span>
+    <button onclick={oninfo} class="rounded-md h-max mt-auto px-3 py-2 text-white font-bold cursor-pointer hover:bg-white hover:text-black border border-white">Info</button>
     <button onclick={onstart} class="bg-white rounded-md h-max mt-auto px-3 py-2 text-black font-bold cursor-pointer hover:bg-transparent hover:text-white border border-white">Enter</button>
   </div>
 </Popup>

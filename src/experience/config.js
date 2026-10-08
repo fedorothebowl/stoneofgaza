@@ -79,6 +79,7 @@ export const TARGET_FOG_DENSITY  = 0.1;
 // ─────────────────────────────────────────────────────────────
 export const AUTOPLAY_WALK_SPEED   = 1.2;
 export const AUTOPLAY_TURN_SECONDS = 2.6;
+export const AUTOPLAY_IDLE_SECS    = 8;    // secondi senza input prima dell'avvio automatico (desktop)
 
 // ── Reading ───────────────────────────────────────────────────
 export const READING_TURN_SECS       = 1.5;  // durata rotazione verso/da il pilastro

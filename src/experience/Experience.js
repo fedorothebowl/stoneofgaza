@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
 import {
-  COLOR_CLEAR, DEV_SPEED_MULT, DROP_SPEED, GROUND_HEIGHT_OFFSET, SPACING, START_HEIGHT, WALK_SPEED
+  AUTOPLAY_IDLE_SECS, COLOR_CLEAR, DEV_SPEED_MULT, DROP_SPEED, GROUND_HEIGHT_OFFSET, SPACING, START_HEIGHT, WALK_SPEED
 } from './config.js';
 import { getPitch, getYaw, setYawPitch } from './angles.js';
 import { BackgroundAudio, Footsteps } from './audio.js';
@@ -46,6 +46,7 @@ export class Experience {
 
   #state = 'loading';    // loading → intro → playing ⇄ paused
   #dropping = false;     // caduta iniziale dall'alto
+  #idleTime = 0;         // secondi senza input, per l'avvio automatico dell'autoplay
   #startTime = null;
   #move = { forward: false, back: false, left: false, right: false };
   #introMouse = { x: 0, y: 0 };   // posizione normalizzata del mouse (-1 … 1) per il parallax
@@ -166,6 +167,7 @@ export class Experience {
 
   #onLock = () => {
     if (this.#state === 'intro') this.#beginDescent();
+    this.#idleTime = 0;
     this.#ui.pause = false;
     this.#state = 'playing';
     this.#bgAudio.unmute();
@@ -203,9 +205,6 @@ export class Experience {
     if (direction) {
       this.#stopAutoplay();
       this.#move[direction] = true;
-    } else if (e.code === 'KeyF' && !this.#dropping) {
-      if (this.#autoplay.active) this.#stopAutoplay();
-      else this.#autoplay.start();
     }
   };
 
@@ -224,7 +223,7 @@ export class Experience {
 
     if (!this.#controls.isLocked || this.#state !== 'playing') return;
 
-    // Un movimento deciso del mouse interrompe l'autoplay
+    // Un movimento deciso del mouse interrompe l'autoplay e azzera l'attesa
     if (Math.abs(e.movementX) + Math.abs(e.movementY) >= 6) this.#stopAutoplay();
   };
 
@@ -243,6 +242,7 @@ export class Experience {
   }
 
   #stopAutoplay() {
+    this.#idleTime = 0;
     if (this.#autoplay.active && this.#autoplay.requestStop()) this.#releaseMoveKeys();
   }
 
@@ -278,6 +278,7 @@ export class Experience {
 
     if (!isMobile && this.#controls.isLocked && !this.#dropping && !autoplay.active) {
       this.#updateManualWalk(delta);
+      this.#updateIdle(delta);
       this.#environment.follow(camera.position.x, camera.position.z);
     }
 
@@ -291,6 +292,21 @@ export class Experience {
 
     this.#renderer.render(this.#scene, camera);
   };
+
+  // Dopo AUTOPLAY_IDLE_SECS senza input (tasti di movimento o mouse) parte l'autoplay
+  #updateIdle(delta) {
+    const move = this.#move;
+    if (move.forward || move.back || move.left || move.right) {
+      this.#idleTime = 0;
+      return;
+    }
+
+    this.#idleTime += delta * DEV_SPEED_MULT;
+    if (this.#idleTime >= AUTOPLAY_IDLE_SECS) {
+      this.#idleTime = 0;
+      this.#autoplay.start();
+    }
+  }
 
   // Nell'intro la camera segue leggermente il mouse
   #updateIntroParallax(delta) {

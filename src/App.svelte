@@ -4,7 +4,7 @@
   import IntroPopup from './components/IntroPopup.svelte';
   import PausePopup from './components/PausePopup.svelte';
   import { Experience } from './experience/Experience.js';
-  import { closeInfo, toggleInfo, ui } from './lib/ui.svelte.js';
+  import { closeInfo, openInfo, toggleInfo, ui } from './lib/ui.svelte.js';
 
   let container;
   let bgAudio;
@@ -43,7 +43,7 @@
 <!-- Il canvas WebGL viene aggiunto in coda a <main> da Experience -->
 <main bind:this={container} class="text-stone-300">
   {#if ui.instructions}
-    <IntroPopup totalCount={ui.totalCount} snapshotDate={ui.snapshotDate} onstart={() => experience.start()} />
+    <IntroPopup totalCount={ui.totalCount} snapshotDate={ui.snapshotDate} onstart={() => experience.start()} oninfo={openInfo} />
   {/if}
 
   {#if ui.info}
@@ -51,6 +51,6 @@
   {/if}
 
   {#if ui.pause}
-    <PausePopup onresume={() => experience.resume()} />
+    <PausePopup onresume={() => experience.resume()} oninfo={openInfo} />
   {/if}
 </main>

@@ -15,8 +15,14 @@
     Contact: <a href="mailto:info@stonesofgaza.com" class="underline hover:text-white">info@stonesofgaza.com</a>
   </p>
 
-  <div class="flex justify-between items-center">
-    <span>Press I to close</span>
+  <p class="text-sm font-bold">Controls</p>
+
+  <p class="text-sm">WASD or ↑↓←→ to move<br>
+    Autoplay starts after 8 seconds without input<br>
+    Press ESC to pause
+  </p>
+
+  <div class="flex justify-end">
     <button onclick={onclose} class="bg-white rounded-md px-2 py-1 text-black font-bold cursor-pointer hover:bg-transparent hover:text-white border border-white">Close</button>
   </div>
 </Popup>
