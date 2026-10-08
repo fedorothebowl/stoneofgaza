@@ -10,75 +10,16 @@
   <link rel="stylesheet" href="/src/style.css">
 </head>
 
-  <body>
+<body>
   <!-- Loading overlay: inline style per apparire subito, prima ancora del CSS -->
   <div id="loading-overlay" style="position:fixed;inset:0;background:#101010;z-index:99999;display:grid;place-items:center">
     <p style="color:#666;font-family:sans-serif;font-size:12px;letter-spacing:0.15em;text-transform:uppercase">Loading…</p>
   </div>
     
-  <audio loop autoplay muted playsinline id="bg-audio">
-    <source src="/drone.mp3" type="audio/mpeg">
-  </audio>
+  <div id="app"></div>
 
-  <!-- NON c'è più il listener sul body: l'unmute avviene solo al click di Enter/Resume -->
-
-    <main class="text-stone-300">
-    
-      <!-- Popup iniziale -->
-      <div class="w-screen h-screen fixed inset-0 z-[1] grid place-items-center m-auto" id="instructions">
-        <div class="bg-black/50 w-[90%] md:max-w-xl max-w-max m-auto h-max text-xs p-4 rounded-md space-y-2.5">
-
-          <div class="space-y-2">
-            <p class="text-sm"><strong>"Stones of Gaza"</strong> It is an artistic installation that transforms pain into collective memory. Each vertical pillar embodies an interrupted life, creating a landscape of testimony where data from Gaza's Ministry of Health becomes digital sculptural matter. The work generates a silent dialogue between statistics and humanity, where the serial accumulation of volumes builds a living memorial that updates over time, making the invisible tangible and transforming numbers into physical presence in space.</p>
-            <p class="text-sm">As of today, <span id="sad-count"></span> pillars have been registered.</p>
-
-            <p class="lg:hidden animate-pulse">In the mobile version, the experience is designed as an autoplay sequence, where the user passively observes the evolving memorial. On desktop, instead, the user can freely navigate and rotate around the installation, exploring the space and the pillars from different perspectives, creating a more active and immersive interaction with the memorial landscape.</p>
-          </div>
-
-
-          <div class="flex justify-between">
-            <span>WASD or ↑↓←→ to move <br> Press F to toggle autoplay <br> Press I to get info about this work<br> Press ESC to pause </span>
-            <button id="start" class="bg-white rounded-md h-max mt-auto px-3 py-2 text-black font-bold cursor-pointer hover:bg-transparent hover:text-white border border-white">Enter</button>
-          </div>
-        </div>
-      </div>
-     <!-- Popup informazioni -->
-    <div class="w-screen h-screen fixed inset-0 z-100 grid place-items-center hidden" id="info-screen">
-      <div class="bg-black/50 w-[90%] md:max-w-xl max-w-max m-auto h-max text-xs p-4 rounded-md space-y-2.5">
-        <p class="text-sm font-bold">About this work</p>
-
-        <p class="text-sm">Data source: Gaza Ministry of Health, made available by
-          <a href="https://techforpalestine.org/" target="_blank" rel="noopener noreferrer" class="underline hover:text-white">Tech for Palestine</a>.
-        </p>
-
-        <p class="text-sm">Concept &amp; development: Federico Petrucci<br>
-          Contact: <a href="mailto:info@stonesofgaza.com" class="underline hover:text-white">info@stonesofgaza.com</a>
-        </p>
-
-        <div class="flex justify-between items-center">
-          <span>Press I to close</span>
-          <button id="close-info" class="bg-white rounded-md px-2 py-1 text-black font-bold cursor-pointer hover:bg-transparent hover:text-white border border-white">Close</button>
-        </div>
-      </div>
-    </div>
-
-      <!-- Popup pausa -->
-      <div class="w-screen h-screen fixed inset-0 z-100 grid place-items-center hidden" id="pause-screen">
-        <div class="bg-black/50 w-[90%] md:max-w-md max-w-max m-auto h-max text-xs p-4 rounded-md space-y-2.5">
-          <p class="text-sm font-bold">Paused</p>
-          <p>The memorial waits in silence.</p>
-          <div class="flex justify-between items-center">
-            <span>WASD or ↑↓←→ to move <br> Press F to toggle autoplay <br>Press I to get info about this work<br> </span>
-            <button id="resume" class="bg-white rounded-md px-2 py-1 text-black font-bold cursor-pointer hover:bg-transparent hover:text-white border border-white">Resume</button>
-          </div>
-        </div>
-      </div>
-
-    </main>
-    
-    <script type="module" src="/src/main.js"></script>
-    
-  </body>
+  <script type="module" src="/src/main.js"></script>
+</body>
 </html>
 
 <!--
