@@ -38,6 +38,7 @@ export const COLOR_SKY_BOTTOM = 0x404040;   // sotto l'orizzonte
 // ── Nebbia e sfondo renderer ──────────────────────────────────
 export const COLOR_FOG   = 0x202020;
 export const COLOR_CLEAR = 0x101010;
+export const MAX_PIXEL_RATIO = 2;   // risoluzione di rendering massima rispetto ai pixel CSS
 
 // ── Luci ──────────────────────────────────────────────────────
 export const COLOR_HEMI_SKY    = 0x505050;  // HemisphereLight — lato cielo
@@ -80,7 +81,7 @@ export const TARGET_FOG_DENSITY  = 0.1;
 // ─────────────────────────────────────────────────────────────
 export const AUTOPLAY_WALK_SPEED   = 1.2;
 export const AUTOPLAY_TURN_SECONDS = 2.6;
-export const AUTOPLAY_IDLE_SECS    = 8;    // secondi senza input prima dell'avvio automatico (desktop)
+export const AUTOPLAY_IDLE_SECS    = 8;    // secondi senza input prima dell'avvio automatico
 
 // ── Reading ───────────────────────────────────────────────────
 export const READING_TURN_SECS       = 1.5;  // durata rotazione verso/da il pilastro

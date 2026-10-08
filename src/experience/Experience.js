@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
 import {
-  AUTOPLAY_IDLE_SECS, COLOR_CLEAR, DEV_SPEED_MULT, DROP_SPEED, GROUND_HEIGHT_OFFSET, SPACING, START_HEIGHT, WALK_SPEED
+  AUTOPLAY_IDLE_SECS, COLOR_CLEAR, DEV_SPEED_MULT, DROP_SPEED, GROUND_HEIGHT_OFFSET, MAX_PIXEL_RATIO, SPACING,
+  START_HEIGHT, WALK_SPEED
 } from './config.js';
 import { getPitch, getYaw, setYawPitch } from './angles.js';
 import { BackgroundAudio, Footsteps } from './audio.js';
@@ -109,7 +110,6 @@ export class Experience {
     this.#footsteps.init();
     this.#gyro.enable(this.#listeners.signal);   // dentro il gesto: iOS chiede qui il permesso
     this.#ui.touchControls = true;
-    setTimeout(() => { if (!this.#destroyed) this.#autoplay.start(); }, 300);
   }
 
   // Click su "Resume"
@@ -124,7 +124,7 @@ export class Experience {
     this.#ui.pause = false;
     this.#state = 'playing';
     this.#bgAudio.resume();
-    if (!this.#autoplay.active) this.#autoplay.start();
+    this.#idleTime = 0;
   }
 
   // Pulsanti touch: stesso effetto dei tasti di movimento
@@ -159,6 +159,9 @@ export class Experience {
     this.#camera.rotation.order = 'YXZ';   // vedi angles.js
 
     this.#renderer = new THREE.WebGLRenderer({ antialias: true });
+    // Senza questo il canvas viene disegnato a 1x e sugli schermi ad alta densità
+    // (telefoni) appare sgranato. Limite a MAX_PIXEL_RATIO per non pesare sulla GPU.
+    this.#renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
     this.#renderer.setSize(window.innerWidth, window.innerHeight);
     this.#renderer.setClearColor(COLOR_CLEAR);
     this.#renderer.shadowMap.enabled = true;

@@ -16,7 +16,7 @@
     <p class="text-sm"><strong>"Stones of Gaza"</strong> It is an artistic installation that transforms pain into collective memory. Each vertical pillar embodies an interrupted life, creating a landscape of testimony where data from Gaza's Ministry of Health becomes digital sculptural matter. The work generates a silent dialogue between statistics and humanity, where the serial accumulation of volumes builds a living memorial that updates over time, making the invisible tangible and transforming numbers into physical presence in space.</p>
     <p class="text-sm">As of {asOf}, <span>{totalCount ?? ''}</span> pillars have been registered.</p>
 
-    <p class="lg:hidden animate-pulse">On mobile the walk starts on its own. Turn and tilt your phone to look around, and use the on-screen arrows to move.</p>
+    <p class="lg:hidden animate-pulse">On mobile, turn and tilt your phone to look around, and use the on-screen arrows to move.</p>
   </div>
 
   <div class="flex justify-between">
