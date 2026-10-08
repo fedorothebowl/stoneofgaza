@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import InfoPopup from './components/InfoPopup.svelte';
   import IntroPopup from './components/IntroPopup.svelte';
+  import MobileControls from './components/MobileControls.svelte';
   import PausePopup from './components/PausePopup.svelte';
   import { Experience } from './experience/Experience.js';
   import { closeInfo, openInfo, toggleInfo, ui } from './lib/ui.svelte.js';
@@ -48,6 +49,10 @@
 
   {#if ui.info}
     <InfoPopup onclose={closeInfo} />
+  {/if}
+
+  {#if ui.touchControls && !ui.info}
+    <MobileControls onmove={(direction, pressed) => experience.setMove(direction, pressed)} />
   {/if}
 
   {#if ui.pause}

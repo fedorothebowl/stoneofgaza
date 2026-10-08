@@ -5,6 +5,7 @@ export const ui = $state({
   info: false,
   totalCount: null,     // numero di pilastri, noto dopo il caricamento
   snapshotDate: null,   // data dei dati (YYYY-MM-DD) se arrivano dalla copia locale
+  touchControls: false, // pulsanti di movimento su mobile, dopo l'ingresso
 });
 
 // Popup nascosto dall'apertura dell'info, da ripristinare alla chiusura

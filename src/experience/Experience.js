@@ -12,6 +12,7 @@ import { isMobile } from './device.js';
 import { updateEngravings } from './engravings.js';
 import { Environment } from './environment.js';
 import { gridSizeFor } from './grid.js';
+import { Gyro } from './gyro.js';
 import { HeadBob } from './headBob.js';
 import { buildPillars } from './pillars.js';
 
@@ -37,6 +38,8 @@ export class Experience {
   #colliders = new Colliders();
   #bob       = new HeadBob();
   #footsteps = new Footsteps();
+  #gyro      = new Gyro();
+  #gyroEngaged = false;  // il giroscopio sta guidando lo sguardo
   #bgAudio;
 
   #clock = new THREE.Clock();
@@ -103,6 +106,8 @@ export class Experience {
     this.#state = 'playing';
     this.#bgAudio.unmute();
     this.#footsteps.init();
+    this.#gyro.enable(this.#listeners.signal);   // dentro il gesto: iOS chiede qui il permesso
+    this.#ui.touchControls = true;
     setTimeout(() => { if (!this.#destroyed) this.#autoplay.start(); }, 300);
   }
 
@@ -119,6 +124,13 @@ export class Experience {
     this.#state = 'playing';
     this.#bgAudio.resume();
     if (!this.#autoplay.active) this.#autoplay.start();
+  }
+
+  // Pulsanti touch: stesso effetto dei tasti di movimento
+  setMove(direction, pressed) {
+    if (this.#state !== 'playing' || !(direction in this.#move)) return;
+    if (pressed) this.#stopAutoplay();
+    this.#move[direction] = pressed;
   }
 
   destroy() {
@@ -276,7 +288,10 @@ export class Experience {
       if (camera.position.y <= landing + 0.1) this.#dropping = false;
     }
 
-    if (!isMobile && this.#controls.isLocked && !this.#dropping && !autoplay.active) {
+    const manual = this.#active && !this.#dropping && !autoplay.active;
+    if (isMobile) this.#updateGyro(manual, delta);
+
+    if (manual) {
       this.#updateManualWalk(delta);
       this.#updateIdle(delta);
       this.#environment.follow(camera.position.x, camera.position.z);
@@ -293,7 +308,25 @@ export class Experience {
     this.#renderer.render(this.#scene, camera);
   };
 
-  // Dopo AUTOPLAY_IDLE_SECS senza input (tasti di movimento o mouse) parte l'autoplay
+  // Su mobile il giroscopio guida lo sguardo quando non c'è l'autoplay; una
+  // rotazione decisa del telefono lo interrompe, come il mouse su desktop.
+  #updateGyro(manual, delta) {
+    const gyro = this.#gyro;
+    if (gyro.consumeMoved() && this.#state === 'playing') this.#stopAutoplay();
+
+    if (!manual || !gyro.ready) {
+      this.#gyroEngaged = false;
+      return;
+    }
+
+    if (!this.#gyroEngaged) {
+      gyro.anchor(this.#camera);
+      this.#gyroEngaged = true;
+    }
+    gyro.applyTo(this.#camera, delta);
+  }
+
+  // Dopo AUTOPLAY_IDLE_SECS senza input (movimento, mouse o giroscopio) parte l'autoplay
   #updateIdle(delta) {
     const move = this.#move;
     if (move.forward || move.back || move.left || move.right) {

@@ -94,3 +94,8 @@ export const FOOTSTEP_VOLUME = 0.3;
 
 // Attesa massima dell'inizio della risposta dell'API prima di usare i dati locali
 export const API_TIMEOUT_SECS = 8;
+
+// ── Giroscopio (mobile) ───────────────────────────────────────
+export const GYRO_SMOOTHING      = 12;    // rapidità con cui la camera insegue il sensore
+export const GYRO_MAX_PITCH      = 1.4;   // limite su/giù dello sguardo (radianti)
+export const GYRO_INTERRUPT_RATE = 45;    // gradi/s: oltre questa soglia la rotazione interrompe l'autoplay
