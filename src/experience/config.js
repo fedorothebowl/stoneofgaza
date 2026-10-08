@@ -24,6 +24,7 @@ export const SPACING            = BASE_SPACING * 1.1;
 export const PILLAR_WIDTH       = 2.3;
 export const PILLAR_HEIGHT      = 4.5;
 export const ENGRAVING_DISTANCE = 25;   // entro questa distanza i nomi vengono incisi
+export const ENGRAVINGS_PER_FRAME = 2;  // nomi incisi al massimo per frame, per non bloccare il rendering
 
 // ─────────────────────────────────────────────────────────────
 // COLORI SCENA

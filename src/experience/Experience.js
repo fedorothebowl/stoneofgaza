@@ -40,6 +40,7 @@ export class Experience {
   #footsteps = new Footsteps();
   #gyro      = new Gyro();
   #gyroEngaged = false;  // il giroscopio sta guidando lo sguardo
+  #engravingsCompiled = false;
   #bgAudio;
 
   #clock = new THREE.Clock();
@@ -301,8 +302,16 @@ export class Experience {
       this.#environment.follow(camera.position.x, camera.position.z);
     }
 
-    if (this.#active && !this.#dropping) {
-      updateEngravings(this.#scene, this.#items, camera.position, this.#environment.getSunDirection(_sunDir));
+    // Anche durante intro e discesa, così all'atterraggio i nomi sono già pronti
+    if (this.#state === 'intro' || this.#active) {
+      const created = updateEngravings(
+        this.#scene, this.#items, camera.position, this.#environment.getSunDirection(_sunDir), this.#renderer
+      );
+      // Compila lo shader dei nomi appena esistono i primi piani, non quando entrano in vista
+      if (created && !this.#engravingsCompiled) {
+        this.#renderer.compile(this.#scene, camera);
+        this.#engravingsCompiled = true;
+      }
     }
 
     this.#renderer.render(this.#scene, camera);

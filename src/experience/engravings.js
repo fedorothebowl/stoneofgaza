@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ENGRAVING_DISTANCE, PILLAR_HEIGHT, PILLAR_WIDTH } from './config.js';
+import { ENGRAVING_DISTANCE, ENGRAVINGS_PER_FRAME, PILLAR_HEIGHT, PILLAR_WIDTH } from './config.js';
 
 // ─────────────────────────────────────────────────────────────
 // TESTO INCISO NELLA PIETRA
@@ -69,8 +69,10 @@ function createEngravedTexture({ en_name, ar_name, age }) {
 
 // Un piano trasparente con il nome su ognuna delle quattro facce.
 // Texture e geometry sono condivise tra i quattro piani.
-function createEngravingPlanes(item) {
+function createEngravingPlanes(item, renderer) {
   const tex = createEngravedTexture(item.person);
+  // Carica subito la texture sulla GPU, invece che al primo frame in cui il piano entra in vista
+  renderer.initTexture(tex);
   const geo = new THREE.PlaneGeometry(PILLAR_WIDTH, PILLAR_HEIGHT);
 
   return FACES.map((face, i) => {
@@ -106,10 +108,20 @@ function disposeEngravingPlanes(scene, item) {
   item.planes = [];
 }
 
-// Incide i nomi sui pilastri vicini alla camera e libera quelli lontani
-export function updateEngravings(scene, items, cameraPosition, sunDirection) {
+const NEAR_SQ = ENGRAVING_DISTANCE * ENGRAVING_DISTANCE;
+
+// Incide i nomi sui pilastri vicini alla camera e libera quelli lontani.
+// La distanza è misurata in pianta, così i nomi si preparano già durante
+// l'intro e la discesa, e se ne creano pochi per frame: disegnare e caricare
+// decine di texture nello stesso frame produce uno scatto visibile.
+// Restituisce true se in questo frame sono stati creati nuovi piani.
+export function updateEngravings(scene, items, cameraPosition, sunDirection, renderer) {
+  let budget = ENGRAVINGS_PER_FRAME;
+
   for (const item of items) {
-    const near = cameraPosition.distanceTo(item.position) < ENGRAVING_DISTANCE;
+    const dx = cameraPosition.x - item.position.x;
+    const dz = cameraPosition.z - item.position.z;
+    const near = dx * dx + dz * dz < NEAR_SQ;
 
     if (!near) {
       if (item.planes.length > 0) disposeEngravingPlanes(scene, item);
@@ -117,7 +129,9 @@ export function updateEngravings(scene, items, cameraPosition, sunDirection) {
     }
 
     if (item.planes.length === 0) {
-      item.planes = createEngravingPlanes(item);
+      if (budget === 0) continue;
+      budget--;
+      item.planes = createEngravingPlanes(item, renderer);
       scene.add(...item.planes);
     }
 
@@ -128,4 +142,6 @@ export function updateEngravings(scene, items, cameraPosition, sunDirection) {
       plane.material.opacity = 0.25 + illum * 0.75;
     }
   }
+
+  return budget < ENGRAVINGS_PER_FRAME;
 }
