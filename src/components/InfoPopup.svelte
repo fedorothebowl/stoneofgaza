@@ -18,7 +18,7 @@
   <p class="text-sm font-bold">Controls</p>
 
   <p class="text-sm">WASD or ↑↓←→ to move<br>
-    Autoplay starts after 8 seconds without input<br>
+    Autoplay starts after 8 seconds without input (2 on mobile)<br>
     Press ESC to pause<br>
     On mobile: turn your phone to look around, use the on-screen arrows to move
   </p>

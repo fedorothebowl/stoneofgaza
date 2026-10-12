@@ -1,1 +1,9 @@
 @import "tailwindcss";
+
+@theme {
+  --animate-fade-away: fade-away 4s ease-out 2s forwards;
+
+  @keyframes fade-away {
+    to { opacity: 0; }
+  }
+}

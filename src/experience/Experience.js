@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
 import {
-  AUTOPLAY_IDLE_SECS, COLOR_CLEAR, DEV_SPEED_MULT, DROP_SPEED, GROUND_HEIGHT_OFFSET, MAX_PIXEL_RATIO, SPACING,
+  AUTOPLAY_IDLE_SECS, AUTOPLAY_IDLE_SECS_MOBILE, COLOR_CLEAR, DEV_SPEED_MULT, DROP_SPEED, GROUND_HEIGHT_OFFSET, MAX_PIXEL_RATIO, SPACING,
   START_HEIGHT, WALK_SPEED
 } from './config.js';
 import { getPitch, getYaw, setYawPitch } from './angles.js';
@@ -337,7 +337,8 @@ export class Experience {
     gyro.applyTo(this.#camera, delta);
   }
 
-  // Dopo AUTOPLAY_IDLE_SECS senza input (movimento o mouse) parte l'autoplay
+  // Dopo AUTOPLAY_IDLE_SECS senza input (movimento o mouse) parte l'autoplay;
+  // su mobile l'attesa è AUTOPLAY_IDLE_SECS_MOBILE
   #updateIdle(delta) {
     const move = this.#move;
     if (move.forward || move.back || move.left || move.right) {
@@ -346,7 +347,7 @@ export class Experience {
     }
 
     this.#idleTime += delta * DEV_SPEED_MULT;
-    if (this.#idleTime >= AUTOPLAY_IDLE_SECS) {
+    if (this.#idleTime >= (isMobile ? AUTOPLAY_IDLE_SECS_MOBILE : AUTOPLAY_IDLE_SECS)) {
       this.#idleTime = 0;
       this.#autoplay.start();
     }
