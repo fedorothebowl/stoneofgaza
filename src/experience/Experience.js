@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
 import {
-  AUTOPLAY_IDLE_SECS, AUTOPLAY_IDLE_SECS_MOBILE, COLOR_CLEAR, DEV_SPEED_MULT, DROP_SPEED, GROUND_HEIGHT_OFFSET, MAX_PIXEL_RATIO, SPACING,
-  START_HEIGHT, WALK_SPEED
+  AUTOPLAY_IDLE_SECS, AUTOPLAY_IDLE_SECS_MOBILE, COLOR_CLEAR, DEV_SPEED_MULT, DROP_SPEED, GROUND_HEIGHT_OFFSET,
+  GYRO_MAX_PITCH, MAX_PIXEL_RATIO, SPACING, START_HEIGHT, TOUCH_LOOK_SPEED, WALK_SPEED
 } from './config.js';
 import { getPitch, getYaw, setYawPitch } from './angles.js';
 import { BackgroundAudio, Footsteps } from './audio.js';
@@ -41,6 +41,8 @@ export class Experience {
   #footsteps = new Footsteps();
   #gyro      = new Gyro();
   #gyroEngaged = false;  // il giroscopio sta guidando lo sguardo
+  #lookPointer = null;   // dito che trascina lo sguardo quando il giroscopio non c'è
+  #lookLast = { x: 0, y: 0 };
   #engravingsCompiled = false;
   #bgAudio;
 
@@ -87,7 +89,8 @@ export class Experience {
       bob: this.#bob,
     });
 
-    if (!isMobile) this.#bindDesktopInput();
+    if (isMobile) this.#bindTouchLook();
+    else this.#bindDesktopInput();
     window.addEventListener('resize', this.#onResize, { signal: this.#listeners.signal });
 
     this.#state = 'intro';
@@ -178,6 +181,54 @@ export class Experience {
     window.addEventListener('keyup', this.#onKeyUp, { signal });
     document.addEventListener('mousemove', this.#onMouseMove, { signal });
   }
+
+  #bindTouchLook() {
+    const signal = this.#listeners.signal;
+    const canvas = this.#renderer.domElement;
+
+    // Senza touch-none il browser interpreta il trascinamento come scroll o zoom
+    canvas.classList.add('touch-none');
+    canvas.addEventListener('pointerdown', this.#onLookStart, { signal });
+    canvas.addEventListener('pointermove', this.#onLookMove, { signal });
+    canvas.addEventListener('pointerup', this.#onLookEnd, { signal });
+    canvas.addEventListener('pointercancel', this.#onLookEnd, { signal });
+  }
+
+  // ── Sguardo touch (mobile senza giroscopio) ─────────────────
+
+  #onLookStart = (e) => {
+    if (this.#state !== 'playing' || this.#gyro.ready || this.#lookPointer !== null) return;
+
+    this.#lookPointer = e.pointerId;
+    this.#lookLast.x = e.clientX;
+    this.#lookLast.y = e.clientY;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    this.#stopAutoplay();
+  };
+
+  // Il dito trascina la scena: verso destra la visuale ruota a sinistra
+  #onLookMove = (e) => {
+    if (e.pointerId !== this.#lookPointer) return;
+
+    const dx = e.clientX - this.#lookLast.x;
+    const dy = e.clientY - this.#lookLast.y;
+    this.#lookLast.x = e.clientX;
+    this.#lookLast.y = e.clientY;
+
+    // Durante discesa e uscita dall'autoplay lo sguardo è animato
+    if (this.#state !== 'playing' || this.#dropping || this.#autoplay.active || this.#gyro.ready) return;
+
+    const camera = this.#camera;
+    setYawPitch(
+      camera,
+      getYaw(camera) + dx * TOUCH_LOOK_SPEED,
+      THREE.MathUtils.clamp(getPitch(camera) + dy * TOUCH_LOOK_SPEED, -GYRO_MAX_PITCH, GYRO_MAX_PITCH)
+    );
+  };
+
+  #onLookEnd = (e) => {
+    if (e.pointerId === this.#lookPointer) this.#lookPointer = null;
+  };
 
   // ── Input desktop ───────────────────────────────────────────
 
@@ -341,7 +392,7 @@ export class Experience {
   // su mobile l'attesa è AUTOPLAY_IDLE_SECS_MOBILE
   #updateIdle(delta) {
     const move = this.#move;
-    if (move.forward || move.back || move.left || move.right) {
+    if (move.forward || move.back || move.left || move.right || this.#lookPointer !== null) {
       this.#idleTime = 0;
       return;
     }
